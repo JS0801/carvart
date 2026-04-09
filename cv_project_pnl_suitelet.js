@@ -53,8 +53,8 @@ define(['N/search', 'N/file', 'N/log'],
             }
 
             const metaJson = meta
-                ? JSON.stringify({ generatedAt: meta.generatedAt, count: meta.count, dict: meta.dict, filterOptions: meta.filterOptions, chunks: meta.chunks, gen: meta.gen })
-                : 'null';
+    ? JSON.stringify({ generatedAt: meta.generatedAt, count: meta.count, filterOptions: meta.filterOptions, chunks: meta.chunks, gen: meta.gen, compressed: meta.compressed })
+    : 'null';
             const chunksJs = chunks.length ? chunks.join(',') : '';
 
             const html = `<!DOCTYPE html>
@@ -227,10 +227,28 @@ var CHUNKS=[${chunksJs}];
 var RAW=[],FO={},agg=[],sortCol='margin',sortDir=-1;
 
 if(META){
-  var D=META.dict;FO=META.filterOptions||{};
-  CHUNKS.forEach(function(chunk){chunk.forEach(function(r){
-    RAW.push({id:r[0],ti:r[1],dt:r[2],tp:D.T[r[3]]||'',en:D.E[r[4]]||'',me:r[5],ac:D.A[r[6]]||'',at:D.AT[r[7]]||'',cn:D.C[r[8]]||'',ci:r[9],dp:D.D[r[10]]||'',am:r[11],pi:r[12],pn:D.P[r[13]]||'',rt:D.RT[r[14]]||'transaction',pm:r[15]});
-  })});
+  FO = META.filterOptions || {};
+CHUNKS.forEach(function(chunk){
+  chunk.forEach(function(r){
+    RAW.push({
+      id: r.id || '',
+      ti: r.ti || '',
+      dt: r.dt || '',
+      tp: r.tp || '',
+      en: r.en || '',
+      me: r.me || '',
+      ac: r.ac || '',
+      at: r.at || '',
+      cn: r.cn || '',
+      ci: r.ci || '',
+      am: parseFloat(r.am) || 0,
+      pi: r.pi || '',
+      pn: r.pn || '',
+      rt: r.rt || 'transaction',
+      pm: r.pm || ''
+    });
+  });
+});
   var d=new Date(META.generatedAt);
   document.getElementById('metaInfo').textContent='Data as of: '+d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'})+' \\u00B7 '+META.count+' transactions \\u00B7 Gen '+META.gen;
 }
