@@ -3,42 +3,59 @@
  * @NScriptType Suitelet
  * @NModuleScope SameAccount
  */
-define(['N/search', 'N/file', 'N/log', 'N/runtime'],
-    (search, file, log, runtime) => {
-
+define(['N/search', 'N/file', 'N/log'],
+    (search, file, log) => {
 
         const FOLDER_ID = 13983;
-        const FILE_NAME = 'pnl_data.json';
 
         const onRequest = (context) => {
-            // Also allow manual trigger of rebuild
-            if (context.request.parameters.action === 'rebuild') {
-                return handleRebuild(context);
-            }
             return renderPage(context);
         };
 
         const renderPage = (context) => {
-            let rawJson = '{"transactions":[],"filterOptions":{"projects":[],"classes":[],"projectManagers":[],"jobTypes":[]},"generatedAt":"","transactionCount":0}';
-            let dataFound = false;
+            let meta = null;
+            let chunks = [];
+            let gen = 0;
+            let loadError = '';
 
             try {
-                const fileSearch = search.create({
-                    type: 'file',
-                    filters: [
-                        ['folder', 'anyof', FOLDER_ID]
-                    ],
-                    columns: ['internalid']
-                });
-                fileSearch.run().each(result => {
-                    const f = file.load({ id: result.id });
-                    rawJson = f.getContents();
-                    dataFound = true;
-                    return false; // first match
-                });
+                // Step 1: Read the generation pointer
+                gen = readCurrentGen();
+
+                if (gen > 0) {
+                    // Step 2: Load all files for this generation
+                    const fileMap = loadGenFiles(gen);
+
+                    // Step 3: Parse meta
+                    const metaKey = 'pnl_v' + gen + '_meta.json';
+                    if (fileMap[metaKey]) {
+                        const f = file.load({ id: fileMap[metaKey] });
+                        meta = JSON.parse(f.getContents());
+                    }
+
+                    // Step 4: Parse chunks in order
+                    if (meta) {
+                        for (let i = 0; i < meta.chunks; i++) {
+                            const chunkKey = 'pnl_v' + gen + '_chunk_' + i + '.json';
+                            if (fileMap[chunkKey]) {
+                                const cf = file.load({ id: fileMap[chunkKey] });
+                                chunks.push(cf.getContents());
+                            } else {
+                                loadError = 'Missing chunk file: ' + chunkKey;
+                                log.error('Suitelet', loadError);
+                            }
+                        }
+                    }
+                }
             } catch (e) {
-                log.error('Suitelet', 'Error loading data file: ' + e.message);
+                loadError = e.message;
+                log.error('Suitelet', 'Load error: ' + e.message);
             }
+
+            const metaJson = meta
+                ? JSON.stringify({ generatedAt: meta.generatedAt, count: meta.count, dict: meta.dict, filterOptions: meta.filterOptions, chunks: meta.chunks, gen: meta.gen })
+                : 'null';
+            const chunksJs = chunks.length ? chunks.join(',') : '';
 
             const html = `<!DOCTYPE html>
 <html lang="en">
@@ -51,7 +68,7 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#f4f6f9;--wh:#ffffff;--bg2:#eef0f4;
+  --bg:#f4f6f9;--wh:#fff;--bg2:#eef0f4;
   --bdr:#e0e3ea;--bdr2:#cdd1da;
   --tx:#1a1d26;--tx2:#555a6e;--tx3:#8b90a0;
   --acc:#4f46e5;--accL:#eef2ff;--accG:rgba(79,70,229,.1);
@@ -67,27 +84,20 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
   --sh2:0 4px 16px rgba(0,0,0,.07);
 }
 html{font-size:14px}body{font-family:var(--ff);background:var(--bg);color:var(--tx);min-height:100vh}
-
-/* HEADER */
 .hdr{padding:20px 32px 16px;background:var(--wh);border-bottom:1px solid var(--bdr);display:flex;justify-content:space-between;align-items:flex-start;box-shadow:var(--sh)}
 .hdr h1{font-size:1.35rem;font-weight:700;letter-spacing:-.4px}.hdr h1 em{font-style:normal;color:var(--acc)}
 .hdr p{color:var(--tx2);font-size:.76rem;margin-top:3px}
 .hdr .meta{font-size:.68rem;color:var(--tx3);margin-top:2px;font-family:var(--mono)}
-.hdr-b{display:flex;gap:8px;align-items:flex-start}
+.hdr-b{display:flex;gap:8px}
 .btn{font-family:var(--ff);padding:8px 16px;border-radius:8px;font-size:.76rem;font-weight:600;cursor:pointer;border:1px solid var(--bdr);transition:all .15s;display:inline-flex;align-items:center;gap:5px;background:var(--wh);color:var(--tx2)}
 .btn:hover{background:var(--bg2);color:var(--tx);border-color:var(--bdr2)}
 .btn-a{background:var(--acc);color:#fff;border-color:var(--acc)}.btn-a:hover{background:#4338ca}
-.btn-grn{background:var(--grn);color:#fff;border-color:var(--grn)}.btn-grn:hover{background:#047857}
-
-/* FILTER */
 .fbar{padding:12px 32px;background:var(--wh);border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:11px;flex-wrap:wrap}
 .fbar .tag{font-size:.66rem;font-weight:700;color:var(--acc);text-transform:uppercase;letter-spacing:1.1px;white-space:nowrap}
 .fg{position:relative}.fg label{position:absolute;top:-7px;left:10px;font-size:.56rem;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:var(--tx3);background:var(--wh);padding:0 5px;z-index:1}
 .fg select,.fg input[type=date]{font-family:var(--ff);padding:8px 11px;padding-top:10px;border:1.5px solid var(--bdr);border-radius:8px;font-size:.74rem;background:var(--wh);color:var(--tx);min-width:148px;transition:border-color .2s}
 .fg select:focus,.fg input:focus{outline:none;border-color:var(--acc);box-shadow:0 0 0 3px var(--accG)}
 .clr{font-size:.7rem;color:var(--tx3);cursor:pointer;text-decoration:underline;background:0 0;border:0;font-family:var(--ff)}.clr:hover{color:var(--red)}
-
-/* SUMMARY */
 .sstrip{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;padding:16px 32px}
 .sc{background:var(--wh);border:1px solid var(--bdr);border-radius:var(--rl);padding:16px 18px;position:relative;overflow:hidden;transition:all .15s;box-shadow:var(--sh)}
 .sc:hover{box-shadow:var(--sh2);transform:translateY(-1px)}
@@ -99,8 +109,6 @@ html{font-size:14px}body{font-family:var(--ff);background:var(--bg);color:var(--
 .sc.se .bar{background:var(--red)}.sc.se .vl{color:var(--red)}
 .sc.sm .bar{background:var(--acc)}.sc.sm .vl{color:var(--acc)}
 .sc.sp .bar{background:var(--org)}.sc.sp .vl{color:var(--org)}
-
-/* TABLE */
 .tw{margin:0 32px 32px;border-radius:var(--rl);overflow:hidden;border:1px solid var(--bdr);background:var(--wh);box-shadow:var(--sh)}
 .ttb{padding:10px 18px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--bdr)}
 .ttb .ct{font-size:.7rem;color:var(--tx3);font-family:var(--mono)}
@@ -112,12 +120,9 @@ thead{position:sticky;top:0;z-index:5}
 thead th{padding:10px 14px;text-align:right;font-size:.64rem;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--tx3);background:var(--bg2);border-bottom:2px solid var(--bdr);cursor:pointer;user-select:none;transition:color .15s}
 thead th:hover{color:var(--tx)}thead th:first-child{text-align:left;padding-left:18px}
 thead th .si{margin-left:3px;opacity:.3;font-size:.58rem}thead th.sorted .si{opacity:1;color:var(--acc)}
-tbody tr{border-bottom:1px solid var(--bdr);transition:background .1s}
-tbody tr:hover{background:var(--accL)}
+tbody tr{border-bottom:1px solid var(--bdr);transition:background .1s}tbody tr:hover{background:var(--accL)}
 tbody td{padding:9px 14px;text-align:right;font-size:.8rem}
 tbody td:first-child{text-align:left;padding-left:18px;font-weight:600;color:var(--tx);max-width:260px;overflow:hidden;text-overflow:ellipsis}
-
-/* CHIPS */
 .am{display:inline-block;font-family:var(--mono);font-size:.74rem;font-weight:600;padding:4px 11px;border-radius:6px;cursor:pointer;transition:all .15s;border:1px solid transparent;min-width:80px;text-align:right}
 .am:hover{transform:scale(1.04);box-shadow:var(--sh)}
 .am.z{color:var(--tx3);background:0 0;cursor:default;font-weight:400;opacity:.4}.am.z:hover{transform:none;box-shadow:none}
@@ -130,8 +135,6 @@ tbody td:first-child{text-align:left;padding-left:18px;font-weight:600;color:var
 .am.mp{color:var(--grn);background:var(--grnBg);border-color:var(--grnB)}
 .am.mn{color:var(--red);background:var(--redBg);border-color:var(--redB)}
 tbody tr.tot{background:var(--bg2);border-top:2px solid var(--acc)}tbody tr.tot td{font-weight:700;padding:13px 14px}tbody tr.tot td:first-child{color:var(--acc)}
-
-/* MODAL */
 .mo{display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.3);backdrop-filter:blur(3px);justify-content:center;align-items:center;padding:20px}
 .mo.open{display:flex}
 .mdl{background:var(--wh);border:1px solid var(--bdr);border-radius:var(--rl);width:100%;max-width:1250px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 20px 50px rgba(0,0,0,.12);animation:mi .2s ease}
@@ -141,23 +144,16 @@ tbody tr.tot{background:var(--bg2);border-top:2px solid var(--acc)}tbody tr.tot 
 .mhd .badge{font-size:.64rem;padding:3px 10px;border-radius:20px;font-weight:600;font-family:var(--mono);background:var(--accL);color:var(--acc)}
 .mx{width:30px;height:30px;border-radius:8px;border:1px solid var(--bdr);background:var(--wh);color:var(--tx3);cursor:pointer;font-size:.9rem;display:flex;align-items:center;justify-content:center;transition:all .15s}
 .mx:hover{background:var(--redBg);color:var(--red);border-color:var(--red)}
-.mbd{overflow:auto;flex:1}
-.mbd table{width:100%}
+.mbd{overflow:auto;flex:1}.mbd table{width:100%}
 .mbd thead th{font-size:.58rem;padding:9px 12px;background:var(--bg);text-align:left}
 .mbd tbody td{padding:8px 12px;font-size:.74rem;text-align:left;border-bottom:1px solid var(--bdr)}
-.mbd tbody td:last-child{text-align:right}
-.mbd tbody tr:hover{background:var(--accL)}
+.mbd tbody td:last-child{text-align:right}.mbd tbody tr:hover{background:var(--accL)}
 .mbd a{color:var(--acc);text-decoration:none;font-weight:600}.mbd a:hover{text-decoration:underline}
 .mft{padding:12px 22px;border-top:1px solid var(--bdr);display:flex;justify-content:space-between;font-size:.72rem;color:var(--tx2);font-family:var(--mono);background:var(--bg2);border-radius:0 0 var(--rl) var(--rl)}
 .mft .tv{font-weight:700;color:var(--tx);font-size:.82rem}
 .empty{text-align:center;padding:50px;color:var(--tx3);font-size:.85rem}
-
-/* NO DATA BANNER */
-.no-data-banner{margin:20px 32px;padding:20px 24px;background:#fffbeb;border:1px solid #fde68a;border-radius:var(--rl);display:flex;align-items:center;gap:14px}
-.no-data-banner .icon{font-size:1.6rem}
-.no-data-banner .msg h4{font-size:.9rem;font-weight:600;color:#92400e;margin-bottom:3px}
-.no-data-banner .msg p{font-size:.78rem;color:#a16207}
-
+.banner{margin:16px 32px;padding:16px 20px;background:#fffbeb;border:1px solid #fde68a;border-radius:var(--rl);font-size:.82rem;color:#92400e}
+.banner b{color:#78350f}
 @media(max-width:900px){.sstrip{grid-template-columns:repeat(2,1fr)}.fbar{padding:10px 16px}.tw,.sstrip{margin-left:16px;margin-right:16px}.hdr{padding:16px 16px}}
 </style>
 </head>
@@ -166,12 +162,12 @@ tbody tr.tot{background:var(--bg2);border-top:2px solid var(--acc)}tbody tr.tot 
 <div class="hdr">
   <div>
     <h1><em>&#9632;</em> Project P&amp;L Dashboard</h1>
-    <p>Filters apply instantly &middot; Click any amount to drill down into transactions</p>
+    <p>Filters apply instantly &middot; Click any amount to drill down</p>
     <div class="meta" id="metaInfo"></div>
   </div>
   <div class="hdr-b">
     <button class="btn" onclick="exportCSV()">&#11015; Export CSV</button>
-    <button class="btn" onclick="window.location.reload()">&#8635; Reload</button>
+    <button class="btn btn-a" onclick="window.location.reload()">&#8635; Reload</button>
   </div>
 </div>
 
@@ -226,199 +222,118 @@ tbody tr.tot{background:var(--bg2);border-top:2px solid var(--acc)}tbody tr.tot 
 </div>
 
 <script>
-/* ═══════════════════════════════════════════
-   DATA from pre-built JSON — no search needed
-   ═══════════════════════════════════════════ */
-var DATA = ${rawJson};
-var RAW = DATA.transactions || [];
-var FO = DATA.filterOptions || {};
-var agg=[], sortCol='margin', sortDir=-1;
+var META=${metaJson};
+var CHUNKS=[${chunksJs}];
+var RAW=[],FO={},agg=[],sortCol='margin',sortDir=-1;
 
-(function(){
-  // Show data freshness
-  if(DATA.generatedAt){
-    var d=new Date(DATA.generatedAt);
-    document.getElementById('metaInfo').textContent=
-      'Data as of: '+d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'})
-      +' \\u00B7 '+DATA.transactionCount+' transactions';
-  }
-  if(!RAW.length){
-    document.getElementById('banner').innerHTML=
-      '<div class="no-data-banner"><span class="icon">&#9888;&#65039;</span><div class="msg">'
-      +'<h4>No Data Available</h4>'
-      +'<p>The scheduled script has not run yet or the data file was not found. Please run the scheduled script first, then reload this page.</p>'
-      +'</div></div>';
-  }
-  ps('fP',FO.projects||[]);ps('fC',FO.classes||[]);ps('fM',FO.projectManagers||[]);ps('fJ',FO.jobTypes||[]);
-  af();
-})();
+if(META){
+  var D=META.dict;FO=META.filterOptions||{};
+  CHUNKS.forEach(function(chunk){chunk.forEach(function(r){
+    RAW.push({id:r[0],ti:r[1],dt:r[2],tp:D.T[r[3]]||'',en:D.E[r[4]]||'',me:r[5],ac:D.A[r[6]]||'',at:D.AT[r[7]]||'',cn:D.C[r[8]]||'',ci:r[9],dp:D.D[r[10]]||'',am:r[11],pi:r[12],pn:D.P[r[13]]||'',rt:D.RT[r[14]]||'transaction',pm:r[15]});
+  })});
+  var d=new Date(META.generatedAt);
+  document.getElementById('metaInfo').textContent='Data as of: '+d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'})+' \\u00B7 '+META.count+' transactions \\u00B7 Gen '+META.gen;
+}
+CHUNKS=null;
+if(!RAW.length)document.getElementById('banner').innerHTML='<div class="banner"><b>&#9888;&#65039; No Data.</b> Run the scheduled script first, then reload.</div>';
 
+(function(){ps('fP',FO.projects||[]);ps('fC',FO.classes||[]);ps('fM',FO.projectManagers||[]);ps('fJ',FO.jobTypes||[]);af()})();
 function ps(id,items){var s=document.getElementById(id);items.forEach(function(i){var o=document.createElement('option');o.value=String(i.id);o.textContent=i.name;s.appendChild(o)})}
 
-/* ═══ CLASSIFY ═══ */
-function classify(t){
-  var tp=t.tp,at=t.at;
-  if(tp==='Invoice'||tp==='Credit Memo')return 'income';
-  if(tp==='Journal'&&at==='Income')return 'income';
-  if(tp==='Bill')return 'bills';
-  if(tp==='Bill Credit')return 'billCredit';
-  if(tp==='Check')return 'checks';
-  if(tp==='Journal'&&at!=='Income')return 'journals';
-  if(tp==='Credit Card')return 'creditCard';
-  return 'other';
-}
+function classify(t){var tp=t.tp,at=t.at;if(tp==='Invoice'||tp==='Credit Memo')return'income';if(tp==='Journal'&&at==='Income')return'income';if(tp==='Bill')return'bills';if(tp==='Bill Credit')return'billCredit';if(tp==='Check')return'checks';if(tp==='Journal'&&at!=='Income')return'journals';if(tp==='Credit Card')return'creditCard';return'other'}
 
-/* ═══ FILTER + AGGREGATE ═══ */
 function af(){
   var fp=gv('fP'),fc=gv('fC'),fm_=gv('fM'),fj=gv('fJ'),q=gv('sBox').toLowerCase(),fdf=gv('fDF'),fdt=gv('fDT');
-  var filtered=RAW.filter(function(t){
-    if(fp&&t.pi!==fp)return false;
-    if(fc&&t.ci!==fc)return false;
-    if(fm_&&t.pm&&t.pm!==fm_)return false;
-    if(q&&(t.pn||'').toLowerCase().indexOf(q)<0)return false;
-    if(fdf&&t.dt<fdf)return false;
-    if(fdt&&t.dt>fdt)return false;
-    return true;
-  });
+  var filtered=RAW.filter(function(t){if(fp&&t.pi!==fp)return!1;if(fc&&t.ci!==fc)return!1;if(fm_&&t.pm&&t.pm!==fm_)return!1;if(q&&(t.pn||'').toLowerCase().indexOf(q)<0)return!1;if(fdf&&t.dt<fdf)return!1;if(fdt&&t.dt>fdt)return!1;return!0});
   var map={};
-  filtered.forEach(function(t){
-    var pid=t.pi;
-    if(!map[pid])map[pid]={projectId:pid,projectName:t.pn,income:0,bills:0,billCredit:0,checks:0,journals:0,creditCard:0,margin:0,txns:[]};
-    var cat=classify(t),amt=parseFloat(t.am)||0;
-    if(cat==='income')map[pid].income+=amt;
-    else if(cat==='bills')map[pid].bills+=amt;
-    else if(cat==='billCredit')map[pid].billCredit+=amt;
-    else if(cat==='checks')map[pid].checks+=amt;
-    else if(cat==='journals')map[pid].journals+=amt;
-    else if(cat==='creditCard')map[pid].creditCard+=amt;
-    map[pid].txns.push(t);
-  });
+  filtered.forEach(function(t){var pid=t.pi;if(!map[pid])map[pid]={projectId:pid,projectName:t.pn,income:0,bills:0,billCredit:0,checks:0,journals:0,creditCard:0,margin:0,txns:[]};var cat=classify(t),amt=parseFloat(t.am)||0;if(cat==='income')map[pid].income+=amt;else if(cat==='bills')map[pid].bills+=amt;else if(cat==='billCredit')map[pid].billCredit+=amt;else if(cat==='checks')map[pid].checks+=amt;else if(cat==='journals')map[pid].journals+=amt;else if(cat==='creditCard')map[pid].creditCard+=amt;map[pid].txns.push(t)});
   agg=Object.keys(map).map(function(k){var r=map[k];r.margin=r.income-(r.bills+r.billCredit)-r.journals-r.creditCard-r.checks;return r});
   ds();rt();rs();
 }
-
 function rf(){['fDF','fDT','fP','fC','fM','fJ'].forEach(function(id){document.getElementById(id).value=''});document.getElementById('sBox').value='';af()}
 function gv(id){return document.getElementById(id).value}
+function srt(col){if(sortCol===col)sortDir*=-1;else{sortCol=col;sortDir=col==='projectName'?1:-1}document.querySelectorAll('thead th').forEach(function(th){th.classList.toggle('sorted',th.dataset.c===col);if(th.dataset.c===col)th.querySelector('.si').innerHTML=sortDir===1?'&#9650;':'&#9660;'});ds();rt()}
+function ds(){agg.sort(function(a,b){var va=a[sortCol],vb=b[sortCol];if(sortCol!=='projectName'){va=parseFloat(va)||0;vb=parseFloat(vb)||0}else{va=(va||'').toLowerCase();vb=(vb||'').toLowerCase()}return va<vb?-sortDir:va>vb?sortDir:0})}
 
-/* ═══ SORT ═══ */
-function srt(col){
-  if(sortCol===col)sortDir*=-1;else{sortCol=col;sortDir=col==='projectName'?1:-1}
-  document.querySelectorAll('thead th').forEach(function(th){
-    th.classList.toggle('sorted',th.dataset.c===col);
-    if(th.dataset.c===col)th.querySelector('.si').innerHTML=sortDir===1?'&#9650;':'&#9660;';
-  });
-  ds();rt();
-}
-function ds(){
-  agg.sort(function(a,b){
-    var va=a[sortCol],vb=b[sortCol];
-    if(sortCol!=='projectName'){va=parseFloat(va)||0;vb=parseFloat(vb)||0}
-    else{va=(va||'').toLowerCase();vb=(vb||'').toLowerCase()}
-    return va<vb?-sortDir:va>vb?sortDir:0;
-  });
-}
-
-/* ═══ RENDER TABLE ═══ */
 function rt(){
-  var tb=document.getElementById('tB');
-  document.getElementById('rCt').textContent=agg.length+' projects';
+  var tb=document.getElementById('tB');document.getElementById('rCt').textContent=agg.length+' projects';
   if(!agg.length){tb.innerHTML='<tr><td colspan="8" class="empty">No matching projects found</td></tr>';return}
   var h='',tI=0,tB=0,tBC=0,tCh=0,tJ=0,tCC=0,tM=0;
-  agg.forEach(function(r,idx){
-    tI+=r.income;tB+=r.bills;tBC+=r.billCredit;tCh+=r.checks;tJ+=r.journals;tCC+=r.creditCard;tM+=r.margin;
-    h+='<tr><td>'+esc(r.projectName)+'</td>'
-      +atd(r.income,'cg',idx,'income')
-      +atd(r.bills,'cr',idx,'bills')
-      +atd(r.billCredit,'co',idx,'billCredit')
-      +atd(r.checks,'cp',idx,'checks')
-      +atd(r.journals,'ct',idx,'journals')
-      +atd(r.creditCard,'ck',idx,'creditCard')
-      +atd(r.margin,r.margin>=0?'mp':'mn',idx,'all')
-      +'</tr>';
-  });
-  h+='<tr class="tot"><td>TOTAL ('+agg.length+')</td>'
-    +'<td><span class="am cg">'+fmn(tI)+'</span></td>'
-    +'<td><span class="am cr">'+fmn(tB)+'</span></td>'
-    +'<td><span class="am co">'+fmn(tBC)+'</span></td>'
-    +'<td><span class="am cp">'+fmn(tCh)+'</span></td>'
-    +'<td><span class="am ct">'+fmn(tJ)+'</span></td>'
-    +'<td><span class="am ck">'+fmn(tCC)+'</span></td>'
-    +'<td><span class="am '+(tM>=0?'mp':'mn')+'">'+fmn(tM)+'</span></td></tr>';
+  agg.forEach(function(r,idx){tI+=r.income;tB+=r.bills;tBC+=r.billCredit;tCh+=r.checks;tJ+=r.journals;tCC+=r.creditCard;tM+=r.margin;
+    h+='<tr><td>'+esc(r.projectName)+'</td>'+atd(r.income,'cg',idx,'income')+atd(r.bills,'cr',idx,'bills')+atd(r.billCredit,'co',idx,'billCredit')+atd(r.checks,'cp',idx,'checks')+atd(r.journals,'ct',idx,'journals')+atd(r.creditCard,'ck',idx,'creditCard')+atd(r.margin,r.margin>=0?'mp':'mn',idx,'all')+'</tr>'});
+  h+='<tr class="tot"><td>TOTAL ('+agg.length+')</td><td><span class="am cg">'+fmn(tI)+'</span></td><td><span class="am cr">'+fmn(tB)+'</span></td><td><span class="am co">'+fmn(tBC)+'</span></td><td><span class="am cp">'+fmn(tCh)+'</span></td><td><span class="am ct">'+fmn(tJ)+'</span></td><td><span class="am ck">'+fmn(tCC)+'</span></td><td><span class="am '+(tM>=0?'mp':'mn')+'">'+fmn(tM)+'</span></td></tr>';
   tb.innerHTML=h;
 }
-function atd(v,cls,idx,cat){
-  if(v===0)return '<td><span class="am z">&mdash;</span></td>';
-  return '<td><span class="am '+cls+'" onclick="dd('+idx+',\\''+cat+'\\')">'+fmn(v)+'</span></td>';
-}
+function atd(v,cls,idx,cat){if(v===0)return'<td><span class="am z">&mdash;</span></td>';return'<td><span class="am '+cls+'" onclick="dd('+idx+',\\''+cat+'\\')">'+fmn(v)+'</span></td>'}
 
-/* ═══ SUMMARY ═══ */
-function rs(){
-  var ti=0,te=0,tm=0;
-  agg.forEach(function(r){ti+=r.income;te+=Math.abs(r.bills)+Math.abs(r.billCredit)+Math.abs(r.checks)+Math.abs(r.journals)+Math.abs(r.creditCard);tm+=r.margin});
-  document.getElementById('sP').textContent=agg.length;
-  document.getElementById('sI').textContent=fmn(ti);
-  document.getElementById('sE').textContent=fmn(te);
-  var mEl=document.getElementById('sM');mEl.textContent=fmn(tm);
-  mEl.style.color=tm>=0?'var(--grn)':'var(--red)';
-  document.getElementById('sMp').textContent=ti?(((tm/ti)*100).toFixed(1)+'% margin'):'';
-}
+function rs(){var ti=0,te=0,tm=0;agg.forEach(function(r){ti+=r.income;te+=Math.abs(r.bills)+Math.abs(r.billCredit)+Math.abs(r.checks)+Math.abs(r.journals)+Math.abs(r.creditCard);tm+=r.margin});document.getElementById('sP').textContent=agg.length;document.getElementById('sI').textContent=fmn(ti);document.getElementById('sE').textContent=fmn(te);var mEl=document.getElementById('sM');mEl.textContent=fmn(tm);mEl.style.color=tm>=0?'var(--grn)':'var(--red)';document.getElementById('sMp').textContent=ti?(((tm/ti)*100).toFixed(1)+'% margin'):''}
 
-/* ═══ DRILL DOWN — instant, client-side ═══ */
 function dd(idx,cat){
-  var row=agg[idx];if(!row)return;
-  var txns=row.txns;
+  var row=agg[idx];if(!row)return;var txns=row.txns;
   var filtered=cat==='all'?txns:txns.filter(function(t){return classify(t)===cat});
   document.getElementById('ov').classList.add('open');
   var labels={income:'Income / Revenue',bills:'Bills',billCredit:'Bill Credits',checks:'Checks',journals:'Journals',creditCard:'Credit Card',all:'All Transactions'};
   document.getElementById('mT').textContent=(labels[cat]||cat)+' \\u2014 '+row.projectName;
-  document.getElementById('mBd').textContent=filtered.length+' transactions';
+  document.getElementById('mBd').textContent=filtered.length+' txns';
   document.getElementById('mPr').textContent=row.projectName;
   if(!filtered.length){document.getElementById('mB').innerHTML='<div class="empty">No transactions found</div>';document.getElementById('mTo').textContent='';return}
-
   var rows='';
-  filtered.forEach(function(t){
-    var url='/app/accounting/transactions/'+esc(t.rt||'transaction')+'.nl?id='+t.id;
-    rows+='<tr>'
-      +'<td><a href="'+url+'" target="_blank">'+esc(t.ti||t.id)+'</a></td>'
-      +'<td>'+esc(t.dt)+'</td>'
-      +'<td>'+esc(t.tp)+'</td>'
-      +'<td>'+esc(t.en)+'</td>'
-      +'<td style="max-width:220px;overflow:hidden;text-overflow:ellipsis">'+esc(t.me)+'</td>'
-      +'<td>'+esc(t.ac)+'</td>'
-      +'<td>'+esc(t.cn)+'</td>'
-      +'<td>'+esc(t.dp)+'</td>'
-      +'<td style="text-align:right;font-family:var(--mono);font-weight:600">'+fmn(parseFloat(t.am)||0)+'</td>'
-      +'</tr>';
-  });
-  document.getElementById('mB').innerHTML='<table><thead><tr>'
-    +'<th>Doc #</th><th>Date</th><th>Type</th><th>Entity</th><th>Memo</th><th>Account</th><th>Class</th><th>Dept</th><th style="text-align:right">Amount</th>'
-    +'</tr></thead><tbody>'+rows+'</tbody></table>';
+  filtered.forEach(function(t){var url='/app/accounting/transactions/'+esc(t.rt||'transaction')+'.nl?id='+t.id;
+    rows+='<tr><td><a href="'+url+'" target="_blank">'+esc(t.ti||t.id)+'</a></td><td>'+esc(t.dt)+'</td><td>'+esc(t.tp)+'</td><td>'+esc(t.en)+'</td><td style="max-width:220px;overflow:hidden;text-overflow:ellipsis">'+esc(t.me)+'</td><td>'+esc(t.ac)+'</td><td>'+esc(t.cn)+'</td><td>'+esc(t.dp)+'</td><td style="text-align:right;font-family:var(--mono);font-weight:600">'+fmn(parseFloat(t.am)||0)+'</td></tr>'});
+  document.getElementById('mB').innerHTML='<table><thead><tr><th>Doc #</th><th>Date</th><th>Type</th><th>Entity</th><th>Memo</th><th>Account</th><th>Class</th><th>Dept</th><th style="text-align:right">Amount</th></tr></thead><tbody>'+rows+'</tbody></table>';
   var total=filtered.reduce(function(s,t){return s+(parseFloat(t.am)||0)},0);
   document.getElementById('mTo').innerHTML='Total: <span class="tv">'+fmn(total)+'</span>';
 }
 function cm(){document.getElementById('ov').classList.remove('open')}
 document.addEventListener('keydown',function(e){if(e.key==='Escape')cm()});
 
-/* ═══ EXPORT ═══ */
-function exportCSV(){
-  if(!agg.length)return;
-  var csv='Project,Income,Bills,Bill Credits,Checks,Journals,Credit Card,Net Margin\\n';
-  agg.forEach(function(r){csv+='"'+(r.projectName||'').replace(/"/g,'""')+'",'+r.income.toFixed(2)+','+r.bills.toFixed(2)+','+r.billCredit.toFixed(2)+','+r.checks.toFixed(2)+','+r.journals.toFixed(2)+','+r.creditCard.toFixed(2)+','+r.margin.toFixed(2)+'\\n'});
-  var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
-  a.download='Project_PnL_'+new Date().toISOString().slice(0,10)+'.csv';a.click();
-}
+function exportCSV(){if(!agg.length)return;var csv='Project,Income,Bills,Bill Credits,Checks,Journals,Credit Card,Net Margin\\n';agg.forEach(function(r){csv+='"'+(r.projectName||'').replace(/"/g,'""')+'",'+r.income.toFixed(2)+','+r.bills.toFixed(2)+','+r.billCredit.toFixed(2)+','+r.checks.toFixed(2)+','+r.journals.toFixed(2)+','+r.creditCard.toFixed(2)+','+r.margin.toFixed(2)+'\\n'});var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='Project_PnL_'+new Date().toISOString().slice(0,10)+'.csv';a.click()}
 
 function fmn(n){return(n||0).toLocaleString('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2})}
-function esc(s){if(!s)return '';var d=document.createElement('div');d.textContent=s;return d.innerHTML}
+function esc(s){if(!s)return'';var d=document.createElement('div');d.textContent=s;return d.innerHTML}
 </script>
 </body>
 </html>`;
             context.response.write(html);
         };
 
-        const getScriptUrl = () => {
-            const script = runtime.getCurrentScript();
-            return '/app/site/hosting/scriptlet.nl?script=' + script.id + '&deploy=' + script.deploymentId;
+        /* ═══════ READ GENERATION POINTER ═══════ */
+        const readCurrentGen = () => {
+            try {
+                const results = [];
+                search.create({
+                    type: 'file',
+                    filters: [['name', 'is', 'pnl_gen.json'], 'AND', ['folder', 'anyof', FOLDER_ID]],
+                    columns: ['internalid']
+                }).run().each(r => { results.push(r.id); return true; });
+
+                if (results.length > 0) {
+                    const f = file.load({ id: results[0] });
+                    return JSON.parse(f.getContents()).gen || 0;
+                }
+            } catch (e) {
+                log.debug('Suitelet', 'No gen pointer: ' + e.message);
+            }
+            return 0;
+        };
+
+        /* ═══════ LOAD ALL FILES FOR A GENERATION ═══════ */
+        const loadGenFiles = (gen) => {
+            const prefix = 'pnl_v' + gen + '_';
+            const fileMap = {};
+            try {
+                search.create({
+                    type: 'file',
+                    filters: [['folder', 'anyof', FOLDER_ID], 'AND', ['name', 'startswith', prefix]],
+                    columns: ['internalid', 'name']
+                }).run().each(result => {
+                    fileMap[result.getValue('name')] = result.id;
+                    return true;
+                });
+            } catch (e) {
+                log.error('Suitelet', 'Error finding gen ' + gen + ' files: ' + e.message);
+            }
+            return fileMap;
         };
 
         return { onRequest };
