@@ -279,11 +279,10 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
                     search.createColumn({ name: 'account' }),
                     search.createColumn({ name: 'accounttype' }),
                     search.createColumn({ name: 'class' }),
-                    search.createColumn({ name: 'department' }),
                     search.createColumn({ name: 'amount' }),
                     search.createColumn({ name: 'custcol_cv_project' }),
                     search.createColumn({ name: 'recordtype' }),
-                    search.createColumn({ name: 'custbody_cv_project_mgr' }),
+                    search.createColumn({ name: 'custbody_cv_projectmgrso' }),
                     search.createColumn({ name: 'location' })
                 ]
             });
@@ -305,12 +304,11 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
                         at: r.getText('accounttype') || '',
                         cn: r.getText('class') || '',
                         ci: r.getValue('class') || '',
-                        dp: r.getText('department') || '',
                         am: r.getValue('amount') || 0,
                         pi: r.getValue('custcol_cv_project') || '',
                         pn: r.getText('custcol_cv_project') || '',
                         rt: r.getValue('recordtype') || 'transaction',
-                        pm: r.getValue('custbody_cv_project_mgr') || ''
+                        pm: r.getValue('custbody_cv_projectmgrso') || ''
                     });
                 });
             });
@@ -342,7 +340,7 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
                 }).run().each(res => { r.projectManagers.push({ id: res.id, name: res.getValue('entityid') }); return true; });
             } catch (e) { /* skip */ }
             try {
-                search.create({ type: 'customlist_job_type',
+                search.create({ type: 'customlist_cv_company',
                     columns: [search.createColumn({ name: 'name', sort: search.Sort.ASC })]
                 }).run().each(res => { r.jobTypes.push({ id: res.id, name: res.getValue('name') }); return true; });
             } catch (e) { /* skip */ }
