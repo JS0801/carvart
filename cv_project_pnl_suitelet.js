@@ -245,7 +245,8 @@ CHUNKS.forEach(function(chunk){
       pi: r.pi || '',
       pn: r.pn || '',
       rt: r.rt || 'transaction',
-      pm: r.pm || ''
+      pm: r.pm || '',
+      st: r.st || ''
     });
   });
 });
