@@ -338,8 +338,9 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
                     ['custcol_cv_project', 'noneof', '@NONE@']
                 ],
                 columns: [
+                    search.createColumn({ name: 'internalid', sort: search.Sort.DESC  }),
                     search.createColumn({ name: 'tranid' }),
-                    search.createColumn({ name: 'trandate', sort: search.Sort.DESC }),
+                    search.createColumn({ name: 'trandate'}),
                     search.createColumn({ name: 'type' }),
                     search.createColumn({ name: 'mainname' }),
                     search.createColumn({ name: 'memomain' }), // header memo
