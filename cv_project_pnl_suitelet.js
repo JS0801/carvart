@@ -260,93 +260,85 @@ function ps(id,items){var s=document.getElementById(id);items.forEach(function(i
 
 function classify(t){var tp=t.tp,at=t.at;if(tp==='Invoice'||tp==='Credit Memo')return'income';if(tp==='Journal'&&at==='Income')return'income';if(tp==='Bill')return'bills';if(tp==='Bill Credit')return'billCredit';if(tp==='Check')return'checks';if(tp==='Journal'&&at!=='Income')return'journals';if(tp==='Credit Card')return'creditCard';return'other'}
 
-function pd(v) {
-    if (!v) return null;
+function af(){
+  var fp = gv('fP'),
+      fc = gv('fC'),
+      fm_ = gv('fM'),
+      fj = gv('fJ'),
+      q = gv('sBox').toLowerCase(),
+      fdf = gv('fDF'),
+      fdt = gv('fDT');
 
-    // yyyy-mm-dd
-    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
-        var p1 = v.split('-');
-        return new Date(Number(p1[0]), Number(p1[1]) - 1, Number(p1[2]));
+  function normDate(v){
+    if(!v) return '';
+    if(v.indexOf('-') > -1) return v; // already yyyy-mm-dd
+
+    var p = v.split('/');
+    if(p.length === 3){
+      var mm = p[0].length === 1 ? '0' + p[0] : p[0];
+      var dd = p[1].length === 1 ? '0' + p[1] : p[1];
+      var yy = p[2];
+      return yy + '-' + mm + '-' + dd;
+    }
+    return v;
+  }
+
+  var fromDate = normDate(fdf);
+  var toDate   = normDate(fdt);
+
+  var filtered = RAW.filter(function(t){
+    var txDate = normDate(t.dt);
+
+    if(fp && t.pi !== fp) return false;
+    if(fc && t.ci !== fc) return false;
+    if(fm_ && t.pm && t.pm !== fm_) return false;
+    if(q && (t.pn || '').toLowerCase().indexOf(q) < 0) return false;
+    if(fromDate && txDate && txDate < fromDate) return false;
+    if(toDate && txDate && txDate > toDate) return false;
+
+    return true;
+  });
+
+  var map = {};
+  filtered.forEach(function(t){
+    var pid = t.pi;
+    if(!map[pid]){
+      map[pid] = {
+        projectId: pid,
+        projectName: (t.pn || ''),
+        income: 0,
+        bills: 0,
+        billCredit: 0,
+        checks: 0,
+        journals: 0,
+        creditCard: 0,
+        margin: 0,
+        txns: []
+      };
     }
 
-    // mm/dd/yyyy or m/d/yyyy
-    if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(v)) {
-        var p2 = v.split('/');
-        return new Date(Number(p2[2]), Number(p2[0]) - 1, Number(p2[1]));
-    }
+    var cat = classify(t),
+        amt = parseFloat(t.am) || 0;
 
-    var d = new Date(v);
-    return isNaN(d.getTime()) ? null : d;
-}
+    if(cat === 'income') map[pid].income += amt;
+    else if(cat === 'bills') map[pid].bills += amt;
+    else if(cat === 'billCredit') map[pid].billCredit += amt;
+    else if(cat === 'checks') map[pid].checks += amt;
+    else if(cat === 'journals') map[pid].journals += amt;
+    else if(cat === 'creditCard') map[pid].creditCard += amt;
 
-function af() {
-    var fp = gv('fP');
-    var fc = gv('fC');
-    var fm_ = gv('fM');
-    var fj = gv('fJ');
-    var q = gv('sBox').toLowerCase();
-    var fdf = gv('fDF');
-    var fdt = gv('fDT');
+    map[pid].txns.push(t);
+  });
 
-    var fromDate = pd(fdf);
-    var toDate = pd(fdt);
+  agg = Object.keys(map).map(function(k){
+    var r = map[k];
+    r.margin = r.income - (r.bills + r.billCredit) - r.journals - r.creditCard - r.checks;
+    return r;
+  });
 
-    var filtered = RAW.filter(function(t) {
-        var txDate = pd(t.dt);
-
-        if (fp && t.pi !== fp) return false;
-        if (fc && t.ci !== fc) return false;
-        if (fm_ && t.pm && t.pm !== fm_) return false;
-        if (q && (t.pn || '').toLowerCase().indexOf(q) < 0) return false;
-
-        if (fromDate && txDate && txDate < fromDate) return false;
-        if (toDate && txDate && txDate > toDate) return false;
-
-        return true;
-    });
-
-    var map = {};
-
-    filtered.forEach(function(t) {
-        var pid = t.pi;
-
-        if (!map[pid]) {
-            map[pid] = {
-                projectId: pid,
-                projectName: t.pn || '',
-                income: 0,
-                bills: 0,
-                billCredit: 0,
-                checks: 0,
-                journals: 0,
-                creditCard: 0,
-                margin: 0,
-                txns: []
-            };
-        }
-
-        var cat = classify(t);
-        var amt = parseFloat(t.am) || 0;
-
-        if (cat === 'income') map[pid].income += amt;
-        else if (cat === 'bills') map[pid].bills += amt;
-        else if (cat === 'billCredit') map[pid].billCredit += amt;
-        else if (cat === 'checks') map[pid].checks += amt;
-        else if (cat === 'journals') map[pid].journals += amt;
-        else if (cat === 'creditCard') map[pid].creditCard += amt;
-
-        map[pid].txns.push(t);
-    });
-
-    agg = Object.keys(map).map(function(k) {
-        var r = map[k];
-        r.margin = r.income - (r.bills + r.billCredit) - r.journals - r.creditCard - r.checks;
-        return r;
-    });
-
-    ds();
-    rt();
-    rs();
+  ds();
+  rt();
+  rs();
 }
 function rf(){['fDF','fDT','fP','fC','fM','fJ'].forEach(function(id){document.getElementById(id).value=''});document.getElementById('sBox').value='';af()}
 function gv(id){return document.getElementById(id).value}
