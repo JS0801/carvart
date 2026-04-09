@@ -264,7 +264,7 @@ function af(){
   var fp=gv('fP'),fc=gv('fC'),fm_=gv('fM'),fj=gv('fJ'),q=gv('sBox').toLowerCase(),fdf=gv('fDF'),fdt=gv('fDT');
   var filtered=RAW.filter(function(t){if(fp&&t.pi!==fp)return!1;if(fc&&t.ci!==fc)return!1;if(fm_&&t.pm&&t.pm!==fm_)return!1;if(q&&(t.pn||'').toLowerCase().indexOf(q)<0)return!1;if(fdf&&t.dt<fdf)return!1;if(fdt&&t.dt>fdt)return!1;return!0});
   var map={};
-  filtered.forEach(function(t){var pid=t.pi;if(!map[pid])map[pid]={projectId:pid,projectName:(t.pn || '') + ' [' + (t.pi || '') + ']',income:0,bills:0,billCredit:0,checks:0,journals:0,creditCard:0,margin:0,txns:[]};var cat=classify(t),amt=parseFloat(t.am)||0;if(cat==='income')map[pid].income+=amt;else if(cat==='bills')map[pid].bills+=amt;else if(cat==='billCredit')map[pid].billCredit+=amt;else if(cat==='checks')map[pid].checks+=amt;else if(cat==='journals')map[pid].journals+=amt;else if(cat==='creditCard')map[pid].creditCard+=amt;map[pid].txns.push(t)});
+  filtered.forEach(function(t){var pid=t.pi;if(!map[pid])map[pid]={projectId:pid,projectName:(t.pn || ''),income:0,bills:0,billCredit:0,checks:0,journals:0,creditCard:0,margin:0,txns:[]};var cat=classify(t),amt=parseFloat(t.am)||0;if(cat==='income')map[pid].income+=amt;else if(cat==='bills')map[pid].bills+=amt;else if(cat==='billCredit')map[pid].billCredit+=amt;else if(cat==='checks')map[pid].checks+=amt;else if(cat==='journals')map[pid].journals+=amt;else if(cat==='creditCard')map[pid].creditCard+=amt;map[pid].txns.push(t)});
   agg=Object.keys(map).map(function(k){var r=map[k];r.margin=r.income-(r.bills+r.billCredit)-r.journals-r.creditCard-r.checks;return r});
   ds();rt();rs();
 }
