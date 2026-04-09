@@ -6,76 +6,260 @@
 define(['N/search', 'N/file', 'N/log', 'N/runtime'],
     (search, file, log, runtime) => {
 
-        
         const FOLDER_ID = 13983;
-        const FILE_NAME = 'pnl_data.json';
+        const MAX_FILE_BYTES = 9 * 1024 * 1024;
+        const MEMO_MAX_LEN = 100;
+        const GEN_FILE = 'pnl_gen.json';
 
         const execute = (context) => {
-            log.audit('PnL Data Builder', 'Starting data build...');
-            const startTime = Date.now();
+            const t0 = Date.now();
+            log.audit('PnL Builder', 'Starting...');
 
             try {
-                // Step 1: Load all transactions
-                const transactions = loadAllTransactions();
-                log.audit('PnL Data Builder', 'Loaded ' + transactions.length + ' transactions');
+                // ── Step 1: Read current generation ──
+                const currentGen = readCurrentGen();
+                const newGen = currentGen + 1;
+                log.audit('PnL Builder', 'Current gen: ' + currentGen + ' → Building gen: ' + newGen);
 
-                // Step 2: Load filter options
+                // ── Step 2: Run search + compress ──
+                const raw = loadAllTransactions();
+                log.audit('PnL Builder', 'Loaded ' + raw.length + ' transactions');
+
+                const compressed = compressData(raw);
                 const filterOptions = loadAllFilterOptions();
 
-                // Step 3: Build the JSON payload
-                const payload = JSON.stringify({
+                // ── Step 3: Write ALL new generation files ──
+                const meta = {
+                    v: 3,
+                    gen: newGen,
                     generatedAt: new Date().toISOString(),
-                    transactionCount: transactions.length,
-                    transactions: transactions,
-                    filterOptions: filterOptions
-                });
+                    count: raw.length,
+                    dict: compressed.dict,
+                    filterOptions: filterOptions,
+                    chunks: 0
+                };
 
-                // Step 4: Check if file already exists → delete it
-                try {
-                    const existingSearch = search.create({
-                        type: 'file',
-                        filters: [
-                            ['name', 'is', FILE_NAME], 'AND',
-                            ['folder', 'anyof', FOLDER_ID]
-                        ],
-                        columns: ['internalid']
-                    });
-                    existingSearch.run().each(result => {
-                        file.delete({ id: result.id });
-                        log.debug('PnL Data Builder', 'Deleted old file ID: ' + result.id);
-                        return true;
-                    });
-                } catch (e) {
-                    log.debug('PnL Data Builder', 'No existing file to delete: ' + e.message);
+                const chunks = chunkArray(compressed.rows);
+                meta.chunks = chunks.length;
+
+                // Save meta file for new gen
+                const metaStr = JSON.stringify(meta);
+                saveFile('pnl_v' + newGen + '_meta.json', metaStr);
+                log.debug('PnL Builder', 'Saved pnl_v' + newGen + '_meta.json (' + (metaStr.length / 1024).toFixed(0) + ' KB)');
+
+                // Save each chunk for new gen
+                for (let i = 0; i < chunks.length; i++) {
+                    const chunkStr = JSON.stringify(chunks[i]);
+                    saveFile('pnl_v' + newGen + '_chunk_' + i + '.json', chunkStr);
+                    log.debug('PnL Builder', 'Saved pnl_v' + newGen + '_chunk_' + i + '.json (' + chunks[i].length + ' rows, ' + (chunkStr.length / 1024).toFixed(0) + ' KB)');
                 }
 
-                // Step 5: Create new file
-                const jsonFile = file.create({
-                    name: FILE_NAME,
-                    fileType: file.Type.JSON,
-                    contents: payload,
-                    folder: FOLDER_ID,
-                    isOnline: false
-                });
+                // ── Step 4: ALL new files written → NOW swap the pointer ──
+                writeGenPointer(newGen);
+                log.audit('PnL Builder', 'Pointer updated to gen ' + newGen);
 
-                const fileId = jsonFile.save();
-                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                // ── Step 5: Delete OLD generation files ──
+                if (currentGen > 0) {
+                    deleteGenFiles(currentGen);
+                    log.audit('PnL Builder', 'Deleted old gen ' + currentGen + ' files');
+                }
 
-                log.audit('PnL Data Builder',
-                    'SUCCESS — File ID: ' + fileId +
-                    ' | Transactions: ' + transactions.length +
-                    ' | Size: ' + (payload.length / 1024).toFixed(0) + ' KB' +
-                    ' | Time: ' + elapsed + 's'
-                );
+                const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+                log.audit('PnL Builder',
+                    'SUCCESS | Gen ' + newGen + ' | ' + raw.length + ' txns | ' +
+                    chunks.length + ' chunk(s) | ' + elapsed + 's');
 
             } catch (e) {
-                log.error('PnL Data Builder', 'FAILED: ' + e.message + '\n' + e.stack);
+                log.error('PnL Builder', 'FAILED: ' + e.message + '\n' + e.stack);
+                // On failure: new gen files may be partial, but pointer still
+                // points to old gen, so Suitelet is unaffected.
+                // Orphaned new-gen files will be overwritten on next run.
             }
         };
 
-        /* ══════════════════════════════════════════════════════
-           LOAD ALL TRANSACTIONS — line-level with all details
-           ══════════════════════════════════════════════════════ */
+        /* ══════════════════════════════
+           GENERATION POINTER
+           ══════════════════════════════ */
+        const readCurrentGen = () => {
+            try {
+                const results = findFiles(GEN_FILE);
+                if (results.length > 0) {
+                    const f = file.load({ id: results[0].id });
+                    const data = JSON.parse(f.getContents());
+                    return data.gen || 0;
+                }
+            } catch (e) {
+                log.debug('PnL Builder', 'No gen file found, starting at 0');
+            }
+            return 0;
+        };
+
+        const writeGenPointer = (gen) => {
+            // Delete existing gen file first
+            const existing = findFiles(GEN_FILE);
+            existing.forEach(f => {
+                try { file.delete({ id: f.id }); } catch (e) { /* ignore */ }
+            });
+
+            const f = file.create({
+                name: GEN_FILE,
+                fileType: file.Type.JSON,
+                contents: JSON.stringify({ gen: gen, updatedAt: new Date().toISOString() }),
+                folder: FOLDER_ID,
+                isOnline: false
+            });
+            f.save();
+        };
+
+        /* ══════════════════════════════
+           DELETE OLD GEN FILES
+           ══════════════════════════════ */
+        const deleteGenFiles = (gen) => {
+            const prefix = 'pnl_v' + gen + '_';
+            try {
+                search.create({
+                    type: 'file',
+                    filters: [
+                        ['folder', 'anyof', FOLDER_ID], 'AND',
+                        ['name', 'startswith', prefix]
+                    ],
+                    columns: ['internalid', 'name']
+                }).run().each(result => {
+                    try {
+                        file.delete({ id: result.id });
+                        log.debug('PnL Builder', 'Deleted: ' + result.getValue('name'));
+                    } catch (e) {
+                        log.debug('PnL Builder', 'Could not delete ' + result.getValue('name') + ': ' + e.message);
+                    }
+                    return true;
+                });
+            } catch (e) {
+                log.debug('PnL Builder', 'Delete gen ' + gen + ' error: ' + e.message);
+            }
+
+            // Also clean up any orphaned files from failed previous runs (gen-2 or older)
+            if (gen > 1) {
+                cleanupOrphans(gen);
+            }
+        };
+
+        const cleanupOrphans = (currentGen) => {
+            try {
+                search.create({
+                    type: 'file',
+                    filters: [
+                        ['folder', 'anyof', FOLDER_ID], 'AND',
+                        ['name', 'startswith', 'pnl_v']
+                    ],
+                    columns: ['internalid', 'name']
+                }).run().each(result => {
+                    const name = result.getValue('name');
+                    // Extract gen number from filename like pnl_v3_meta.json
+                    const match = name.match(/^pnl_v(\d+)_/);
+                    if (match) {
+                        const fileGen = parseInt(match[1]);
+                        // Delete anything older than current gen
+                        if (fileGen < currentGen) {
+                            try {
+                                file.delete({ id: result.id });
+                                log.debug('PnL Builder', 'Orphan cleanup: ' + name);
+                            } catch (e) { /* ignore */ }
+                        }
+                    }
+                    return true;
+                });
+            } catch (e) { /* ignore */ }
+        };
+
+        /* ══════════════════════════════
+           FILE HELPERS
+           ══════════════════════════════ */
+        const findFiles = (name) => {
+            const results = [];
+            try {
+                search.create({
+                    type: 'file',
+                    filters: [
+                        ['name', 'is', name], 'AND',
+                        ['folder', 'anyof', FOLDER_ID]
+                    ],
+                    columns: ['internalid', 'name']
+                }).run().each(result => {
+                    results.push({ id: result.id, name: result.getValue('name') });
+                    return true;
+                });
+            } catch (e) { /* empty */ }
+            return results;
+        };
+
+        const saveFile = (name, contents) => {
+            const f = file.create({
+                name: name,
+                fileType: file.Type.JSON,
+                contents: contents,
+                folder: FOLDER_ID,
+                isOnline: false
+            });
+            f.save();
+        };
+
+        /* ══════════════════════════════
+           DICTIONARY COMPRESSION
+           ══════════════════════════════ */
+        const compressData = (raw) => {
+            const dicts = { P:{}, E:{}, A:{}, AT:{}, C:{}, D:{}, T:{}, RT:{} };
+            const arrays = { P:[], E:[], A:[], AT:[], C:[], D:[], T:[], RT:[] };
+
+            const getIdx = (k, val) => {
+                if (!val && val !== 0) return -1;
+                const s = String(val);
+                if (dicts[k][s] !== undefined) return dicts[k][s];
+                const idx = arrays[k].length;
+                dicts[k][s] = idx;
+                arrays[k].push(s);
+                return idx;
+            };
+
+            const rows = raw.map(r => [
+                r.id,
+                r.ti,
+                r.dt,
+                getIdx('T', r.tp),
+                getIdx('E', r.en),
+                r.me ? r.me.substring(0, MEMO_MAX_LEN) : '',
+                getIdx('A', r.ac),
+                getIdx('AT', r.at),
+                getIdx('C', r.cn),
+                r.ci,
+                getIdx('D', r.dp),
+                r.am,
+                r.pi,
+                getIdx('P', r.pn),
+                getIdx('RT', r.rt),
+                r.pm
+            ]);
+
+            return { dict: arrays, rows: rows };
+        };
+
+        /* ══════════════════════════════
+           CHUNK ROWS
+           ══════════════════════════════ */
+        const chunkArray = (rows) => {
+            const fullStr = JSON.stringify(rows);
+            if (fullStr.length <= MAX_FILE_BYTES) return [rows];
+            const bytesPerRow = fullStr.length / rows.length;
+            const rowsPerChunk = Math.floor(MAX_FILE_BYTES / bytesPerRow * 0.85);
+            const chunks = [];
+            for (let i = 0; i < rows.length; i += rowsPerChunk) {
+                chunks.push(rows.slice(i, i + rowsPerChunk));
+            }
+            return chunks;
+        };
+
+        /* ══════════════════════════════
+           LOAD ALL TRANSACTIONS
+           ══════════════════════════════ */
         const loadAllTransactions = () => {
             const results = [];
             const s = search.create({
@@ -94,24 +278,21 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
                     search.createColumn({ name: 'memo' }),
                     search.createColumn({ name: 'account' }),
                     search.createColumn({ name: 'accounttype' }),
-                    search.createColumn({ name: 'classnohierarchy' }),
+                    search.createColumn({ name: 'class' }),
+                    search.createColumn({ name: 'department' }),
                     search.createColumn({ name: 'amount' }),
                     search.createColumn({ name: 'custcol_cv_project' }),
                     search.createColumn({ name: 'recordtype' }),
-                    search.createColumn({ name: 'custbody_cv_projectmgrso' }),
-                    search.createColumn({ name: 'locationnohierarchy' })
+                    search.createColumn({ name: 'custbody_cv_project_mgr' }),
+                    search.createColumn({ name: 'location' })
                 ]
             });
-
             const paged = s.runPaged({ pageSize: 1000 });
             paged.pageRanges.forEach(pr => {
-                // Check governance
-                const remaining = runtime.getCurrentScript().getRemainingUsage();
-                if (remaining < 200) {
-                    log.audit('PnL Data Builder', 'Low governance (' + remaining + '), stopping at ' + results.length + ' results');
+                if (runtime.getCurrentScript().getRemainingUsage() < 200) {
+                    log.audit('PnL Builder', 'Low governance, stopping at ' + results.length);
                     return;
                 }
-
                 paged.fetch({ index: pr.index }).data.forEach(r => {
                     results.push({
                         id: r.id,
@@ -122,24 +303,23 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
                         me: r.getValue('memo') || '',
                         ac: r.getText('account') || '',
                         at: r.getText('accounttype') || '',
-                        cn: r.getText('classnohierarchy') || '',
-                        ci: r.getValue('classnohierarchy') || '',
+                        cn: r.getText('class') || '',
+                        ci: r.getValue('class') || '',
+                        dp: r.getText('department') || '',
                         am: r.getValue('amount') || 0,
                         pi: r.getValue('custcol_cv_project') || '',
                         pn: r.getText('custcol_cv_project') || '',
                         rt: r.getValue('recordtype') || 'transaction',
-                        pm: r.getValue('custbody_cv_projectmgrso') || ''
+                        pm: r.getValue('custbody_cv_project_mgr') || ''
                     });
                 });
             });
-
             return results;
         };
 
         /* ═══════ FILTER OPTIONS ═══════ */
         const loadAllFilterOptions = () => {
-            const r = { projects: [], classnohierarchyes: [], projectManagers: [], jobTypes: [] };
-
+            const r = { projects: [], classes: [], projectManagers: [], jobTypes: [] };
             try {
                 search.create({ type: 'customrecord_cv_project', filters: [['isinactive', 'is', 'F']],
                     columns: [search.createColumn({ name: 'name', sort: search.Sort.ASC })]
@@ -149,27 +329,23 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
                     search.create({ type: 'job', filters: [['isinactive', 'is', 'F']],
                         columns: [search.createColumn({ name: 'entityid', sort: search.Sort.ASC })]
                     }).run().each(res => { r.projects.push({ id: res.id, name: res.getValue('entityid') }); return true; });
-                } catch (e2) { log.debug('proj', e2); }
+                } catch (e2) { /* skip */ }
             }
-
             try {
-                search.create({ type: 'classnohierarchyification', filters: [['isinactive', 'is', 'F']],
+                search.create({ type: 'classification', filters: [['isinactive', 'is', 'F']],
                     columns: [search.createColumn({ name: 'name', sort: search.Sort.ASC })]
-                }).run().each(res => { r.classnohierarchyes.push({ id: res.id, name: res.getValue('name') }); return true; });
-            } catch (e) { log.debug('cls', e); }
-
+                }).run().each(res => { r.classes.push({ id: res.id, name: res.getValue('name') }); return true; });
+            } catch (e) { /* skip */ }
             try {
                 search.create({ type: 'employee', filters: [['isinactive', 'is', 'F']],
                     columns: [search.createColumn({ name: 'entityid', sort: search.Sort.ASC })]
                 }).run().each(res => { r.projectManagers.push({ id: res.id, name: res.getValue('entityid') }); return true; });
-            } catch (e) { log.debug('pm', e); }
-
+            } catch (e) { /* skip */ }
             try {
-                search.create({ type: 'customlist_cv_company',
+                search.create({ type: 'customlist_job_type',
                     columns: [search.createColumn({ name: 'name', sort: search.Sort.ASC })]
                 }).run().each(res => { r.jobTypes.push({ id: res.id, name: res.getValue('name') }); return true; });
-            } catch (e) { log.debug('jt', e); }
-
+            } catch (e) { /* skip */ }
             return r;
         };
 
