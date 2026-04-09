@@ -369,7 +369,7 @@ function dd(idx,cat){
   if(!filtered.length){document.getElementById('mB').innerHTML='<div class="empty">No transactions found</div>';document.getElementById('mTo').textContent='';return}
   var rows='';
   filtered.forEach(function(t){var url='/app/accounting/transactions/transaction.nl?id='+t.id;
-  rows+='<tr><td><a href="'+url+'" target="_blank">'+esc(t.ti||t.id)+'</a></td><td>'+esc(t.dt)+'</td><td>'+esc(t.tp)+'</td><td>'+esc(t.st)+'</td><td>'+esc(t.en)+'</td><td style="max-width:220px;overflow:hidden;text-overflow:ellipsis">'+esc(t.me)+'</td><td>'+esc(t.ac)+'</td><td>'+esc(t.cn)+'</td><td style="text-align:right;font-family:var(--mono);font-weight:600">'+fmn(parseFloat(t.am)||0)+'</td></tr>';
+  rows+='<tr><td><a href="'+url+'" target="_blank">'+esc(t.ti||t.id)+'</a></td><td>'+esc(t.dt)+'</td><td>'+esc(t.tp)+'</td><td>'+esc(t.st||'')+'</td><td>'+esc(t.en)+'</td><td style="max-width:220px;overflow:hidden;text-overflow:ellipsis">'+esc(t.me)+'</td><td>'+esc(t.ac)+'</td><td>'+esc(t.cn)+'</td><td style="text-align:right;font-family:var(--mono);font-weight:600">'+fmn(parseFloat(t.am)||0)+'</td></tr>';
   document.getElementById('mB').innerHTML='<table><thead><tr><th>Doc #</th><th>Date</th><th>Type</th><th>Status</th><th>Entity</th><th>Memo</th><th>Account</th><th>Class</th><th style="text-align:right">Amount</th></tr></thead><tbody>'+rows+'</tbody></table>';
   var total=filtered.reduce(function(s,t){return s+(parseFloat(t.am)||0)},0);
   document.getElementById('mTo').innerHTML='Total: <span class="tv">'+fmn(total)+'</span>';
