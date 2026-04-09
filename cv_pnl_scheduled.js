@@ -2,21 +2,12 @@
  * @NApiVersion 2.1
  * @NScriptType ScheduledScript
  * @NModuleScope SameAccount
- *
- * Scheduled Script: Project P&L Data Builder
- * Runs the transaction search, builds JSON, saves to File Cabinet.
- * Schedule this to run every 15/30/60 mins or as needed.
- *
- * SETUP:
- *   1. Create a folder in File Cabinet called "Project PnL Data" (note the Folder ID)
- *   2. Set the FOLDER_ID constant below to that folder's internal ID
- *   3. Deploy as Scheduled Script with desired frequency
  */
 define(['N/search', 'N/file', 'N/log', 'N/runtime'],
     (search, file, log, runtime) => {
 
-        // ─── CONFIG: Set this to your File Cabinet folder ID ───
-        const FOLDER_ID = 1234; // <-- CHANGE THIS to your folder internal ID
+        
+        const FOLDER_ID = 13983;
         const FILE_NAME = 'pnl_data.json';
 
         const execute = (context) => {
