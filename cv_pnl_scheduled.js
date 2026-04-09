@@ -224,9 +224,10 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
                 row = raw[i];
 
                 key =
-                    (row.ti || '') + '|' +
-                    (row.tp || '') + '|' +
-                    (row.pi || '');
+    (row.ti || '') + '|' +
+    (row.tp || '') + '|' +
+    (row.pi || '') + '|' +
+    (row.at || '');
 
                 if (!grouped[key]) {
                     grouped[key] = {
