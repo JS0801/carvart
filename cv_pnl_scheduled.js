@@ -11,7 +11,7 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
         const MEMO_MAX_LEN = 100;
         const GEN_FILE = 'pnl_gen.json';
 
-        const execute = (context) => {
+        const execute = () => {
             const t0 = Date.now();
             log.audit('PnL Builder', 'Starting...');
 
@@ -21,40 +21,44 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
                 const newGen = currentGen + 1;
                 log.audit('PnL Builder', 'Current gen: ' + currentGen + ' → Building gen: ' + newGen);
 
-                // Step 2: Run search
+                // Step 2: Load all transactions
                 const raw = loadAllTransactions();
                 log.audit('PnL Builder', 'Loaded ' + raw.length + ' transactions');
 
-                // Step 3: Group and sum by Document + Type + Project
+                // Step 3: Group and sum by Document + Type + Project + Account Type
                 const grouped = groupTransactions(raw);
                 log.audit('PnL Builder', 'Grouped into ' + grouped.length + ' transactions');
 
-                // Step 4: Compress + load filters
-                const compressed = compressData(grouped);
+                // Step 4: Load filters
                 const filterOptions = loadAllFilterOptions();
 
-                // Step 5: Write ALL new generation files
+                // Step 5: Chunk raw grouped data directly (no compression)
+                const chunks = chunkArray(grouped);
+
                 const meta = {
-                    v: 3,
+                    v: 4,
                     gen: newGen,
                     generatedAt: new Date().toISOString(),
                     count: grouped.length,
-                    dict: compressed.dict,
                     filterOptions: filterOptions,
-                    chunks: 0
+                    chunks: chunks.length,
+                    compressed: false
                 };
 
-                const chunks = chunkArray(compressed.rows);
-                meta.chunks = chunks.length;
-
+                // Save meta
                 const metaStr = JSON.stringify(meta);
                 saveFile('pnl_v' + newGen + '_meta.json', metaStr);
                 log.debug('PnL Builder', 'Saved pnl_v' + newGen + '_meta.json (' + (metaStr.length / 1024).toFixed(0) + ' KB)');
 
+                // Save chunks
                 for (let i = 0; i < chunks.length; i++) {
                     const chunkStr = JSON.stringify(chunks[i]);
                     saveFile('pnl_v' + newGen + '_chunk_' + i + '.json', chunkStr);
-                    log.debug('PnL Builder', 'Saved pnl_v' + newGen + '_chunk_' + i + '.json (' + chunks[i].length + ' rows, ' + (chunkStr.length / 1024).toFixed(0) + ' KB)');
+                    log.debug(
+                        'PnL Builder',
+                        'Saved pnl_v' + newGen + '_chunk_' + i + '.json (' +
+                        chunks[i].length + ' rows, ' + (chunkStr.length / 1024).toFixed(0) + ' KB)'
+                    );
                 }
 
                 // Step 6: Swap pointer only after all files are saved
@@ -98,11 +102,13 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
 
         const writeGenPointer = (gen) => {
             const existing = findFiles(GEN_FILE);
-            existing.forEach(f => {
+            let i;
+
+            for (i = 0; i < existing.length; i++) {
                 try {
-                    file.delete({ id: f.id });
+                    file.delete({ id: existing[i].id });
                 } catch (e) {}
-            });
+            }
 
             const f = file.create({
                 name: GEN_FILE,
@@ -181,6 +187,7 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
            ══════════════════════════════ */
         const findFiles = (name) => {
             const results = [];
+
             try {
                 search.create({
                     type: 'file',
@@ -197,6 +204,7 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
                     return true;
                 });
             } catch (e) {}
+
             return results;
         };
 
@@ -213,7 +221,7 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
 
         /* ══════════════════════════════
            GROUP AND SUM
-           Document + Type + Project
+           Document + Type + Project + Account Type
            ══════════════════════════════ */
         const groupTransactions = (raw) => {
             const grouped = {};
@@ -224,14 +232,14 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
                 row = raw[i];
 
                 key =
-    (row.ti || '') + '|' +
-    (row.tp || '') + '|' +
-    (row.pi || '') + '|' +
-    (row.at || '');
+                    (row.ti || '') + '|' +
+                    (row.tp || '') + '|' +
+                    (row.pi || '') + '|' +
+                    (row.at || '');
 
                 if (!grouped[key]) {
                     grouped[key] = {
-                        id: row.id,
+                        id: row.id || '',
                         ti: row.ti || '',
                         dt: row.dt || '',
                         tp: row.tp || '',
@@ -260,50 +268,7 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
         };
 
         /* ══════════════════════════════
-           DICTIONARY COMPRESSION
-           ══════════════════════════════ */
-        const compressData = (raw) => {
-            const dicts = { P:{}, E:{}, A:{}, AT:{}, C:{}, D:{}, T:{}, RT:{} };
-            const arrays = { P:[], E:[], A:[], AT:[], C:[], D:[], T:[], RT:[] };
-
-            const getIdx = (k, val) => {
-                if (!val && val !== 0) return -1;
-
-                const s = String(val);
-                if (dicts[k][s] !== undefined) return dicts[k][s];
-
-                const idx = arrays[k].length;
-                dicts[k][s] = idx;
-                arrays[k].push(s);
-                return idx;
-            };
-
-            const rows = raw.map(r => [
-                r.id,
-                r.ti,
-                r.dt,
-                getIdx('T', r.tp),
-                getIdx('E', r.en),
-                r.me ? String(r.me).substring(0, MEMO_MAX_LEN) : '',
-                getIdx('A', r.ac),
-                getIdx('AT', r.at),
-                getIdx('C', r.cn),
-                r.ci,
-                r.am,
-                r.pi,
-                getIdx('P', r.pn),
-                getIdx('RT', r.rt),
-                r.pm
-            ]);
-
-            return {
-                dict: arrays,
-                rows: rows
-            };
-        };
-
-        /* ══════════════════════════════
-           CHUNK ROWS
+           CHUNK RAW JSON DATA
            ══════════════════════════════ */
         const chunkArray = (rows) => {
             const fullStr = JSON.stringify(rows);
@@ -312,11 +277,17 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
                 return [rows];
             }
 
-            const bytesPerRow = fullStr.length / rows.length;
-            const rowsPerChunk = Math.floor((MAX_FILE_BYTES / bytesPerRow) * 0.85);
-            const chunks = [];
+            const bytesPerRow = rows.length ? (fullStr.length / rows.length) : MAX_FILE_BYTES;
+            let rowsPerChunk = Math.floor((MAX_FILE_BYTES / bytesPerRow) * 0.85);
 
-            for (let i = 0; i < rows.length; i += rowsPerChunk) {
+            if (!rowsPerChunk || rowsPerChunk < 1) {
+                rowsPerChunk = 1;
+            }
+
+            const chunks = [];
+            let i;
+
+            for (i = 0; i < rows.length; i += rowsPerChunk) {
                 chunks.push(rows.slice(i, i + rowsPerChunk));
             }
 
@@ -339,12 +310,12 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
                     ['custcol_cv_project', 'noneof', '@NONE@']
                 ],
                 columns: [
-                    search.createColumn({ name: 'internalid', sort: search.Sort.DESC  }),
+                    search.createColumn({ name: 'internalid', sort: search.Sort.DESC }),
                     search.createColumn({ name: 'tranid' }),
-                    search.createColumn({ name: 'trandate'}),
+                    search.createColumn({ name: 'trandate' }),
                     search.createColumn({ name: 'type' }),
                     search.createColumn({ name: 'mainname' }),
-                    search.createColumn({ name: 'memomain' }), // header memo
+                    search.createColumn({ name: 'memomain' }),
                     search.createColumn({ name: 'account' }),
                     search.createColumn({ name: 'accounttype' }),
                     search.createColumn({ name: 'class' }),
