@@ -115,14 +115,14 @@ html{font-size:14px}body{font-family:var(--ff);background:var(--bg);color:var(--
 .sbox{font-family:var(--ff);padding:7px 13px;border-radius:8px;border:1.5px solid var(--bdr);background:var(--wh);color:var(--tx);font-size:.76rem;width:230px;transition:border-color .2s}
 .sbox:focus{outline:none;border-color:var(--acc);box-shadow:0 0 0 3px var(--accG)}
 .ts{overflow-x:auto;max-height:62vh;overflow-y:auto}
-table{width:100%;border-collapse:collapse;white-space:nowrap}
+table{width:100%;border-collapse:collapse;}
 thead{position:sticky;top:0;z-index:5}
 thead th{padding:10px 14px;text-align:right;font-size:.64rem;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--tx3);background:var(--bg2);border-bottom:2px solid var(--bdr);cursor:pointer;user-select:none;transition:color .15s}
 thead th:hover{color:var(--tx)}thead th:first-child{text-align:left;padding-left:18px}
 thead th .si{margin-left:3px;opacity:.3;font-size:.58rem}thead th.sorted .si{opacity:1;color:var(--acc)}
 tbody tr{border-bottom:1px solid var(--bdr);transition:background .1s}tbody tr:hover{background:var(--accL)}
 tbody td{padding:9px 14px;text-align:right;font-size:.8rem}
-tbody td:first-child{text-align:left;padding-left:18px;font-weight:600;color:var(--tx);max-width:260px;overflow:hidden;text-overflow:ellipsis}
+tbody td:first-child{text-align:left;padding-left:18px;font-weight:600;color:var(--tx);max-width:260px;white-space:normal;word-break:break-word;overflow-wrap:anywhere}
 .am{display:inline-block;font-family:var(--mono);font-size:.74rem;font-weight:600;padding:4px 11px;border-radius:6px;cursor:pointer;transition:all .15s;border:1px solid transparent;min-width:80px;text-align:right}
 .am:hover{transform:scale(1.04);box-shadow:var(--sh)}
 .am.z{color:var(--tx3);background:0 0;cursor:default;font-weight:400;opacity:.4}.am.z:hover{transform:none;box-shadow:none}
