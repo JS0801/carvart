@@ -253,7 +253,8 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
                         pi: row.pi || '',
                         pn: row.pn || '',
                         rt: row.rt || 'transaction',
-                        pm: row.pm || ''
+                        pm: row.pm || '',
+                        st: row.st || ''
                     };
                 } else {
                     grouped[key].am += parseFloat(row.am) || 0;
@@ -323,7 +324,8 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
                     search.createColumn({ name: 'custcol_cv_project' }),
                     search.createColumn({ name: 'recordtype' }),
                     search.createColumn({ name: 'custbody_cv_projectmgrso' }),
-                    search.createColumn({ name: 'location' })
+                    search.createColumn({ name: 'location' }),
+                    search.createColumn({ name: 'statusref' })
                 ]
             });
 
@@ -351,7 +353,8 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
                         pi: r.getValue('custcol_cv_project') || '',
                         pn: r.getText('custcol_cv_project') || '',
                         rt: r.getValue('recordtype') || 'transaction',
-                        pm: r.getValue('custbody_cv_projectmgrso') || ''
+                        pm: r.getValue('custbody_cv_projectmgrso') || '',
+                        st: r.getText('statusref') || '',
                     });
                 });
             });
