@@ -260,13 +260,92 @@ function ps(id,items){var s=document.getElementById(id);items.forEach(function(i
 
 function classify(t){var tp=t.tp,at=t.at;if(tp==='Invoice'||tp==='Credit Memo')return'income';if(tp==='Journal'&&at==='Income')return'income';if(tp==='Bill')return'bills';if(tp==='Bill Credit')return'billCredit';if(tp==='Check')return'checks';if(tp==='Journal'&&at!=='Income')return'journals';if(tp==='Credit Card')return'creditCard';return'other'}
 
+function pd(v){
+  if(!v) return null;
+
+  // already yyyy-mm-dd
+  if(/^\d{4}-\d{2}-\d{2}$/.test(v)){
+    var p1 = v.split('-');
+    return new Date(Number(p1[0]), Number(p1[1]) - 1, Number(p1[2]));
+  }
+
+  // mm/dd/yyyy or m/d/yyyy
+  if(/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(v)){
+    var p2 = v.split('/');
+    return new Date(Number(p2[2]), Number(p2[0]) - 1, Number(p2[1]));
+  }
+
+  // fallback
+  var d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 function af(){
-  var fp=gv('fP'),fc=gv('fC'),fm_=gv('fM'),fj=gv('fJ'),q=gv('sBox').toLowerCase(),fdf=gv('fDF'),fdt=gv('fDT');
-  var filtered=RAW.filter(function(t){if(fp&&t.pi!==fp)return!1;if(fc&&t.ci!==fc)return!1;if(fm_&&t.pm&&t.pm!==fm_)return!1;if(q&&(t.pn||'').toLowerCase().indexOf(q)<0)return!1;if(fdf&&t.dt<fdf)return!1;if(fdt&&t.dt>fdt)return!1;return!0});
-  var map={};
-  filtered.forEach(function(t){var pid=t.pi;if(!map[pid])map[pid]={projectId:pid,projectName:(t.pn || ''),income:0,bills:0,billCredit:0,checks:0,journals:0,creditCard:0,margin:0,txns:[]};var cat=classify(t),amt=parseFloat(t.am)||0;if(cat==='income')map[pid].income+=amt;else if(cat==='bills')map[pid].bills+=amt;else if(cat==='billCredit')map[pid].billCredit+=amt;else if(cat==='checks')map[pid].checks+=amt;else if(cat==='journals')map[pid].journals+=amt;else if(cat==='creditCard')map[pid].creditCard+=amt;map[pid].txns.push(t)});
-  agg=Object.keys(map).map(function(k){var r=map[k];r.margin=r.income-(r.bills+r.billCredit)-r.journals-r.creditCard-r.checks;return r});
-  ds();rt();rs();
+  var fp  = gv('fP'),
+      fc  = gv('fC'),
+      fm_ = gv('fM'),
+      fj  = gv('fJ'),
+      q   = gv('sBox').toLowerCase(),
+      fdf = gv('fDF'),
+      fdt = gv('fDT');
+
+  var fromDate = pd(fdf);
+  var toDate   = pd(fdt);
+
+  var filtered = RAW.filter(function(t){
+    var txDate = pd(t.dt);
+
+    if(fp && t.pi !== fp) return false;
+    if(fc && t.ci !== fc) return false;
+    if(fm_ && t.pm && t.pm !== fm_) return false;
+    if(q && (t.pn || '').toLowerCase().indexOf(q) < 0) return false;
+
+    if(fromDate && txDate && txDate < fromDate) return false;
+    if(toDate && txDate && txDate > toDate) return false;
+
+    return true;
+  });
+
+  var map = {};
+  filtered.forEach(function(t){
+    var pid = t.pi;
+    if(!map[pid]){
+      map[pid] = {
+        projectId: pid,
+        projectName: (t.pn || ''),
+        income: 0,
+        bills: 0,
+        billCredit: 0,
+        checks: 0,
+        journals: 0,
+        creditCard: 0,
+        margin: 0,
+        txns: []
+      };
+    }
+
+    var cat = classify(t),
+        amt = parseFloat(t.am) || 0;
+
+    if(cat === 'income') map[pid].income += amt;
+    else if(cat === 'bills') map[pid].bills += amt;
+    else if(cat === 'billCredit') map[pid].billCredit += amt;
+    else if(cat === 'checks') map[pid].checks += amt;
+    else if(cat === 'journals') map[pid].journals += amt;
+    else if(cat === 'creditCard') map[pid].creditCard += amt;
+
+    map[pid].txns.push(t);
+  });
+
+  agg = Object.keys(map).map(function(k){
+    var r = map[k];
+    r.margin = r.income - (r.bills + r.billCredit) - r.journals - r.creditCard - r.checks;
+    return r;
+  });
+
+  ds();
+  rt();
+  rs();
 }
 function rf(){['fDF','fDT','fP','fC','fM','fJ'].forEach(function(id){document.getElementById(id).value=''});document.getElementById('sBox').value='';af()}
 function gv(id){return document.getElementById(id).value}
