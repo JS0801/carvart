@@ -366,7 +366,7 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
 
                 paged.fetch({ index: pr.index }).data.forEach(r => {
                     results.push({
-                        id: r.id,
+                        id: r.getValue('internalid') || '',
                         ti: r.getValue('tranid') || '',
                         dt: r.getValue('trandate') || '',
                         tp: r.getText('type') || '',
