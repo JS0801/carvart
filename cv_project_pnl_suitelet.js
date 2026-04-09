@@ -3,58 +3,32 @@
  * @NScriptType Suitelet
  * @NModuleScope SameAccount
  *
- * Project P&L Dashboard — Optimized Version
- *
- * Key changes:
- * 1. No full transaction dump into the browser
- * 2. Server-side summary search with grouped results
- * 3. Drill-down transactions fetched only on click
- * 4. Much smaller initial page load
- * 5. Filters applied on server, not against a giant RAW array in browser
+ * Project P&L Dashboard — V4 (Fast)
+ * - Grouped search for summary (small payload, fast load)
+ * - Individual transactions fetched ONLY on drill-down click via AJAX
+ * - Light theme, instant client-side filtering on summary data
  */
-
 define(['N/search', 'N/log', 'N/runtime', 'N/url'],
     (search, log, runtime, url) => {
 
-        const CONFIG = {
-            DEFAULT_FROM: '2026-03-01',
-            DEFAULT_TO: '2026-04-30',
-            CLASS_SCOPE_IDS: ['1', '2'],
+        const onRequest = (context) => {
+            const action = context.request.parameters.action;
 
-            PROJECT_FIELD: 'custcol_cv_project',
-            PROJECT_MANAGER_FIELD: 'custbody_cv_projectmgrso',
+            if (action === 'drilldown') {
+                // Return JSON for drill-down
+                context.response.setHeader({ name: 'Content-Type', value: 'application/json' });
+                return handleDrilldown(context);
+            }
 
-            // If you want Job Type later, put exact field ids/joins here and re-add it.
-            ENABLE_JOB_TYPE: false
+            return renderPage(context);
         };
 
-        function onRequest(context) {
-            try {
-                const req = context.request;
-                const action = (req.parameters.action || '').toLowerCase();
-
-                if (action === 'summary') {
-                    return handleSummary(context);
-                }
-
-                if (action === 'drilldown') {
-                    return handleDrilldown(context);
-                }
-
-                return renderPage(context);
-            } catch (e) {
-                log.error('onRequest error', e);
-                context.response.write(buildErrorPage(e));
-            }
-        }
-
-        function renderPage(context) {
-            const suiteletUrl = url.resolveScript({
-                scriptId: runtime.getCurrentScript().id,
-                deploymentId: runtime.getCurrentScript().deploymentId,
-                returnExternalUrl: false
-            });
-
+        /* ═══════════════════════════════════════
+           MAIN PAGE — grouped data embedded
+           ═══════════════════════════════════════ */
+        const renderPage = (context) => {
+            const scriptUrl = getScriptUrl();
+            const reportData = loadGroupedData();
             const filterOpts = loadAllFilterOptions();
 
             const html = `<!DOCTYPE html>
@@ -84,29 +58,22 @@ define(['N/search', 'N/log', 'N/runtime', 'N/url'],
   --sh:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);
   --sh2:0 4px 16px rgba(0,0,0,.08);
 }
-html{font-size:14px}
-body{font-family:var(--ff);background:var(--bg);color:var(--tx);min-height:100vh}
+html{font-size:14px}body{font-family:var(--ff);background:var(--bg);color:var(--tx);min-height:100vh}
 .hdr{padding:22px 32px 18px;background:var(--wh);border-bottom:1px solid var(--bdr);display:flex;justify-content:space-between;align-items:flex-start;box-shadow:var(--sh)}
-.hdr h1{font-size:1.4rem;font-weight:700;letter-spacing:-.4px;color:var(--tx)}
-.hdr h1 em{font-style:normal;color:var(--acc)}
-.hdr p{color:var(--tx2);font-size:.78rem;margin-top:3px}
-.hdr-b{display:flex;gap:8px}
+.hdr h1{font-size:1.4rem;font-weight:700;letter-spacing:-.4px;color:var(--tx)}.hdr h1 em{font-style:normal;color:var(--acc)}
+.hdr p{color:var(--tx2);font-size:.78rem;margin-top:3px}.hdr-b{display:flex;gap:8px}
 .btn{font-family:var(--ff);padding:8px 18px;border-radius:8px;font-size:.78rem;font-weight:600;cursor:pointer;border:1px solid var(--bdr);transition:all .15s;display:inline-flex;align-items:center;gap:6px;background:var(--wh);color:var(--tx2)}
 .btn:hover{background:var(--bg2);color:var(--tx);border-color:var(--bdr2)}
-.btn-a{background:var(--acc);color:#fff;border-color:var(--acc)}
-.btn-a:hover{background:#4338ca;box-shadow:0 2px 8px var(--accG)}
+.btn-a{background:var(--acc);color:#fff;border-color:var(--acc)}.btn-a:hover{background:#4338ca;box-shadow:0 2px 8px var(--accG)}
 .fbar{padding:14px 32px;background:var(--wh);border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .fbar .tag{font-size:.68rem;font-weight:700;color:var(--acc);text-transform:uppercase;letter-spacing:1.2px;margin-right:2px;white-space:nowrap}
-.fg{position:relative}
-.fg label{position:absolute;top:-7px;left:10px;font-size:.58rem;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:var(--tx3);background:var(--wh);padding:0 5px;z-index:1}
+.fg{position:relative}.fg label{position:absolute;top:-7px;left:10px;font-size:.58rem;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:var(--tx3);background:var(--wh);padding:0 5px;z-index:1}
 .fg select,.fg input[type=date]{font-family:var(--ff);padding:9px 12px;padding-top:11px;border:1.5px solid var(--bdr);border-radius:8px;font-size:.76rem;background:var(--wh);color:var(--tx);min-width:152px;transition:border-color .2s}
 .fg select:focus,.fg input:focus{outline:none;border-color:var(--acc);box-shadow:0 0 0 3px var(--accG)}
-.clr{font-size:.72rem;color:var(--tx3);cursor:pointer;text-decoration:underline;background:0 0;border:0;font-family:var(--ff);margin-left:2px}
-.clr:hover{color:var(--red)}
+.clr{font-size:.72rem;color:var(--tx3);cursor:pointer;text-decoration:underline;background:0 0;border:0;font-family:var(--ff);margin-left:2px}.clr:hover{color:var(--red)}
 .sstrip{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;padding:18px 32px}
 .sc{background:var(--wh);border:1px solid var(--bdr);border-radius:var(--rl);padding:18px 20px;position:relative;overflow:hidden;transition:all .15s;box-shadow:var(--sh)}
-.sc:hover{box-shadow:var(--sh2);transform:translateY(-1px)}
-.sc .bar{position:absolute;top:0;left:0;right:0;height:3px}
+.sc:hover{box-shadow:var(--sh2);transform:translateY(-1px)}.sc .bar{position:absolute;top:0;left:0;right:0;height:3px}
 .sc .lb{font-size:.68rem;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--tx3);margin-bottom:8px}
 .sc .vl{font-family:var(--mono);font-size:1.35rem;font-weight:600}
 .sc .sb{font-size:.7rem;color:var(--tx3);margin-top:5px}
@@ -123,37 +90,32 @@ body{font-family:var(--ff);background:var(--bg);color:var(--tx);min-height:100vh
 table{width:100%;border-collapse:collapse;white-space:nowrap}
 thead{position:sticky;top:0;z-index:5}
 thead th{padding:11px 16px;text-align:right;font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--tx3);background:var(--bg2);border-bottom:2px solid var(--bdr);cursor:pointer;user-select:none;transition:color .15s}
-thead th:hover{color:var(--tx)}
-thead th:first-child{text-align:left;padding-left:20px}
-thead th .si{margin-left:3px;opacity:.3;font-size:.6rem}
-thead th.sorted .si{opacity:1;color:var(--acc)}
+thead th:hover{color:var(--tx)}thead th:first-child{text-align:left;padding-left:20px}
+thead th .si{margin-left:3px;opacity:.3;font-size:.6rem}thead th.sorted .si{opacity:1;color:var(--acc)}
 tbody tr{border-bottom:1px solid var(--bdr);transition:background .1s}
 tbody tr:hover{background:var(--accL)}
 tbody td{padding:10px 16px;text-align:right;font-size:.82rem}
 tbody td:first-child{text-align:left;padding-left:20px;font-weight:600;color:var(--tx);max-width:280px;overflow:hidden;text-overflow:ellipsis}
 .am{display:inline-block;font-family:var(--mono);font-size:.76rem;font-weight:600;padding:5px 12px;border-radius:7px;cursor:pointer;transition:all .15s;border:1px solid transparent;min-width:82px;text-align:right}
 .am:hover{transform:scale(1.04);box-shadow:var(--sh)}
-.am.z{color:var(--tx3);background:0 0;cursor:default;font-weight:400;opacity:.5}
-.am.z:hover{transform:none;box-shadow:none}
-.am.cg{color:var(--grn);background:var(--grnBg);border-color:var(--grnB)}
-.am.cr{color:var(--red);background:var(--redBg);border-color:var(--redB)}
-.am.co{color:var(--org);background:var(--orgBg);border-color:var(--orgB)}
-.am.cp{color:var(--pur);background:var(--purBg);border-color:var(--purB)}
-.am.ct{color:var(--tel);background:var(--telBg);border-color:var(--telB)}
-.am.ck{color:var(--pnk);background:var(--pnkBg);border-color:var(--pnkB)}
+.am.z{color:var(--tx3);background:0 0;cursor:default;font-weight:400;opacity:.5}.am.z:hover{transform:none;box-shadow:none}
+.am.cg{color:var(--grn);background:var(--grnBg);border-color:var(--grnB)}.am.cg:hover{box-shadow:0 2px 8px rgba(5,150,105,.2)}
+.am.cr{color:var(--red);background:var(--redBg);border-color:var(--redB)}.am.cr:hover{box-shadow:0 2px 8px rgba(220,38,38,.2)}
+.am.co{color:var(--org);background:var(--orgBg);border-color:var(--orgB)}.am.co:hover{box-shadow:0 2px 8px rgba(217,119,6,.2)}
+.am.cp{color:var(--pur);background:var(--purBg);border-color:var(--purB)}.am.cp:hover{box-shadow:0 2px 8px rgba(124,58,237,.2)}
+.am.ct{color:var(--tel);background:var(--telBg);border-color:var(--telB)}.am.ct:hover{box-shadow:0 2px 8px rgba(13,148,136,.2)}
+.am.ck{color:var(--pnk);background:var(--pnkBg);border-color:var(--pnkB)}.am.ck:hover{box-shadow:0 2px 8px rgba(219,39,119,.2)}
 .am.mp{color:var(--grn);background:var(--grnBg);border-color:var(--grnB)}
 .am.mn{color:var(--red);background:var(--redBg);border-color:var(--redB)}
-tbody tr.tot{background:var(--bg2);border-top:2px solid var(--acc)}
-tbody tr.tot td{font-weight:700;padding:14px 16px}
-tbody tr.tot td:first-child{color:var(--acc)}
-
+tbody tr.tot{background:var(--bg2);border-top:2px solid var(--acc)}tbody tr.tot td{font-weight:700;padding:14px 16px}tbody tr.tot td:first-child{color:var(--acc)}
 .mo{display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.35);backdrop-filter:blur(4px);justify-content:center;align-items:center;padding:24px}
 .mo.open{display:flex}
-.mdl{background:var(--wh);border:1px solid var(--bdr);border-radius:var(--rl);width:100%;max-width:1250px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 25px 60px rgba(0,0,0,.15)}
+.mdl{background:var(--wh);border:1px solid var(--bdr);border-radius:var(--rl);width:100%;max-width:1250px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 25px 60px rgba(0,0,0,.15);animation:mi .2s ease}
+@keyframes mi{from{opacity:0;transform:translateY(12px) scale(.98)}}
 .mhd{padding:16px 24px;border-bottom:1px solid var(--bdr);display:flex;justify-content:space-between;align-items:center;background:var(--bg2);border-radius:var(--rl) var(--rl) 0 0}
 .mhd h3{font-size:.95rem;font-weight:700;display:flex;align-items:center;gap:10px;color:var(--tx)}
 .mhd .badge{font-size:.66rem;padding:3px 10px;border-radius:20px;font-weight:600;font-family:var(--mono);background:var(--accL);color:var(--acc)}
-.mx{width:32px;height:32px;border-radius:8px;border:1px solid var(--bdr);background:var(--wh);color:var(--tx3);cursor:pointer;font-size:.95rem;display:flex;align-items:center;justify-content:center}
+.mx{width:32px;height:32px;border-radius:8px;border:1px solid var(--bdr);background:var(--wh);color:var(--tx3);cursor:pointer;font-size:.95rem;display:flex;align-items:center;justify-content:center;transition:all .15s}
 .mx:hover{background:var(--redBg);color:var(--red);border-color:var(--red)}
 .mbd{overflow:auto;flex:1}
 .mbd table{width:100%}
@@ -161,42 +123,33 @@ tbody tr.tot td:first-child{color:var(--acc)}
 .mbd tbody td{padding:9px 14px;font-size:.76rem;text-align:left;border-bottom:1px solid var(--bdr)}
 .mbd tbody td:last-child{text-align:right}
 .mbd tbody tr:hover{background:var(--accL)}
-.mbd a{color:var(--acc);text-decoration:none;font-weight:600}
-.mbd a:hover{text-decoration:underline}
+.mbd a{color:var(--acc);text-decoration:none;font-weight:600}.mbd a:hover{text-decoration:underline}
 .mft{padding:14px 24px;border-top:1px solid var(--bdr);display:flex;justify-content:space-between;font-size:.75rem;color:var(--tx2);font-family:var(--mono);background:var(--bg2);border-radius:0 0 var(--rl) var(--rl)}
 .mft .tv{font-weight:700;color:var(--tx);font-size:.85rem}
 .empty{text-align:center;padding:50px;color:var(--tx3);font-size:.85rem}
-.loading{padding:24px;text-align:center;color:var(--tx3)}
-.err{padding:24px;text-align:center;color:var(--red)}
-@media(max-width:900px){
-  .sstrip{grid-template-columns:repeat(2,1fr)}
-  .fbar{padding:10px 16px}
-  .tw,.sstrip{margin-left:16px;margin-right:16px}
-  .hdr{padding:18px 16px}
-}
+.ld{display:flex;flex-direction:column;align-items:center;padding:50px;gap:14px}
+.ldr{width:34px;height:34px;border:3px solid var(--bdr);border-top-color:var(--acc);border-radius:50%;animation:sp .7s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}.ld span{color:var(--tx2);font-size:.8rem}
+@media(max-width:900px){.sstrip{grid-template-columns:repeat(2,1fr)}.fbar{padding:10px 16px}.tw,.sstrip{margin-left:16px;margin-right:16px}.hdr{padding:18px 16px}}
 </style>
 </head>
 <body>
 
 <div class="hdr">
-  <div>
-    <h1><em>&#9632;</em> Project P&amp;L Dashboard</h1>
-    <p>Optimized version &middot; Server-side summary &middot; Drill-down on demand</p>
-  </div>
+  <div><h1><em>&#9632;</em> Project P&amp;L Dashboard</h1><p>Filters apply instantly &middot; Click amounts to drill down into transactions</p></div>
   <div class="hdr-b">
     <button class="btn" onclick="exportCSV()">&#11015; Export CSV</button>
-    <button class="btn btn-a" onclick="loadSummary()">&#8635; Refresh Data</button>
+    <button class="btn btn-a" onclick="window.location.reload()">&#8635; Refresh</button>
   </div>
 </div>
 
 <div class="fbar">
   <span class="tag">&#9889; Filters</span>
-  <div class="fg"><label>From</label><input type="date" id="fDF" value="${escapeHtml(CONFIG.DEFAULT_FROM)}"></div>
-  <div class="fg"><label>To</label><input type="date" id="fDT" value="${escapeHtml(CONFIG.DEFAULT_TO)}"></div>
-  <div class="fg"><label>Project</label><select id="fP"><option value="">All Projects</option></select></div>
-  <div class="fg"><label>Class</label><select id="fC"><option value="">All Classes</option></select></div>
-  <div class="fg"><label>Project Mgr</label><select id="fM"><option value="">All Managers</option></select></div>
-  <button class="clr" onclick="resetFilters()">&#10005; Clear all</button>
+  <div class="fg"><label>Project</label><select id="fP" onchange="af()"><option value="">All Projects</option></select></div>
+  <div class="fg"><label>Class</label><select id="fC" onchange="af()"><option value="">All Classes</option></select></div>
+  <div class="fg"><label>Project Mgr</label><select id="fM" onchange="af()"><option value="">All Managers</option></select></div>
+  <div class="fg"><label>Job Type</label><select id="fJ" onchange="af()"><option value="">All Types</option></select></div>
+  <button class="clr" onclick="rf()">&#10005; Clear all</button>
 </div>
 
 <div class="sstrip">
@@ -208,774 +161,403 @@ tbody tr.tot td:first-child{color:var(--acc)}
 
 <div class="tw">
   <div class="ttb">
-    <input class="sbox" type="text" id="sBox" placeholder="&#128269; Search projects...">
+    <input class="sbox" type="text" id="sBox" placeholder="&#128269; Search projects..." oninput="af()">
     <span class="ct" id="rCt">0 projects</span>
   </div>
   <div class="ts">
     <table>
       <thead><tr>
-        <th data-c="projectName" onclick="sortBy('projectName')" style="text-align:left">Project <span class="si">&#9650;</span></th>
-        <th data-c="income" onclick="sortBy('income')">Income / Revenue <span class="si">&#9650;</span></th>
-        <th data-c="bills" onclick="sortBy('bills')">Bills <span class="si">&#9650;</span></th>
-        <th data-c="billCredit" onclick="sortBy('billCredit')">Bill Credit <span class="si">&#9650;</span></th>
-        <th data-c="checks" onclick="sortBy('checks')">Checks <span class="si">&#9650;</span></th>
-        <th data-c="journals" onclick="sortBy('journals')">Journals <span class="si">&#9650;</span></th>
-        <th data-c="creditCard" onclick="sortBy('creditCard')">Credit Card <span class="si">&#9650;</span></th>
-        <th data-c="margin" onclick="sortBy('margin')">Net Margin <span class="si">&#9650;</span></th>
+        <th data-c="projectName" onclick="doSort('projectName')" style="text-align:left">Project <span class="si">&#9650;</span></th>
+        <th data-c="income" onclick="doSort('income')">Income / Revenue <span class="si">&#9650;</span></th>
+        <th data-c="bills" onclick="doSort('bills')">Bills <span class="si">&#9650;</span></th>
+        <th data-c="billCredit" onclick="doSort('billCredit')">Bill Credit <span class="si">&#9650;</span></th>
+        <th data-c="checks" onclick="doSort('checks')">Checks <span class="si">&#9650;</span></th>
+        <th data-c="journals" onclick="doSort('journals')">Journals <span class="si">&#9650;</span></th>
+        <th data-c="creditCard" onclick="doSort('creditCard')">Credit Card <span class="si">&#9650;</span></th>
+        <th data-c="margin" onclick="doSort('margin')">Net Margin <span class="si">&#9650;</span></th>
       </tr></thead>
-      <tbody id="tB"><tr><td colspan="8" class="loading">Loading...</td></tr></tbody>
+      <tbody id="tB"></tbody>
     </table>
   </div>
 </div>
 
-<div class="mo" id="ov" onclick="if(event.target===this)closeModal()">
+<div class="mo" id="ov" onclick="if(event.target===this)cm()">
   <div class="mdl">
-    <div class="mhd">
-      <h3><span id="mT">Transactions</span><span class="badge" id="mBd">0</span></h3>
-      <button class="mx" onclick="closeModal()">&#10005;</button>
-    </div>
+    <div class="mhd"><h3><span id="mT">Transactions</span><span class="badge" id="mBd">0</span></h3><button class="mx" onclick="cm()">&#10005;</button></div>
     <div class="mbd" id="mB"></div>
     <div class="mft"><span id="mTo"></span><span id="mPr"></span></div>
   </div>
 </div>
 
 <script>
-var SUITELET_URL = ${JSON.stringify(suiteletUrl)};
-var FILTERS = ${JSON.stringify(filterOpts)};
-var SUMMARY = [];
-var VIEW = [];
-var SORT_COL = 'margin';
-var SORT_DIR = -1;
-var DEBOUNCE = null;
+/* ═══ EMBEDDED: grouped summary (tiny payload) + filter options ═══ */
+var ALL = ${JSON.stringify(reportData)};
+var FO  = ${JSON.stringify(filterOpts)};
+var SU  = '${scriptUrl}';
 
-(function init(){
-  populateSelect('fP', FILTERS.projects || []);
-  populateSelect('fC', FILTERS.classes || []);
-  populateSelect('fM', FILTERS.projectManagers || []);
+var filtered = [], sortCol = 'margin', sortDir = -1;
 
-  document.getElementById('fDF').addEventListener('change', loadSummary);
-  document.getElementById('fDT').addEventListener('change', loadSummary);
-  document.getElementById('fP').addEventListener('change', loadSummary);
-  document.getElementById('fC').addEventListener('change', loadSummary);
-  document.getElementById('fM').addEventListener('change', loadSummary);
-
-  document.getElementById('sBox').addEventListener('input', function(){
-    if (DEBOUNCE) clearTimeout(DEBOUNCE);
-    DEBOUNCE = setTimeout(applyClientSearchAndRender, 250);
-  });
-
-  loadSummary();
+(function(){
+  ps('fP',FO.projects||[]);
+  ps('fC',FO.classes||[]);
+  ps('fM',FO.projectManagers||[]);
+  ps('fJ',FO.jobTypes||[]);
+  af();
 })();
 
-function populateSelect(id, items){
-  var s = document.getElementById(id);
-  items.forEach(function(i){
-    var o = document.createElement('option');
-    o.value = i.id;
-    o.textContent = i.name;
-    s.appendChild(o);
+function ps(id,items){
+  var s=document.getElementById(id);
+  items.forEach(function(i){var o=document.createElement('option');o.value=i.id;o.textContent=i.name;s.appendChild(o)});
+}
+function gv(id){return document.getElementById(id).value}
+
+/* ═══ FILTER (client-side on summary data) ═══ */
+function af(){
+  var fp=gv('fP'),fc=gv('fC'),fm=gv('fM'),fj=gv('fJ'),q=gv('sBox').toLowerCase();
+  filtered=ALL.filter(function(r){
+    if(fp&&r.projectId!==fp)return false;
+    if(fc&&r.classId&&r.classId!==fc)return false;
+    if(fm&&r.projMgrId&&r.projMgrId!==fm)return false;
+    if(fj&&r.jobTypeId&&r.jobTypeId!==fj)return false;
+    if(q&&(r.projectName||'').toLowerCase().indexOf(q)<0)return false;
+    return true;
   });
+  applySort();renderTable();renderSummary();
+}
+function rf(){
+  ['fP','fC','fM','fJ'].forEach(function(id){document.getElementById(id).value=''});
+  document.getElementById('sBox').value='';af();
 }
 
-function getFilters(){
-  return {
-    from: document.getElementById('fDF').value || '',
-    to: document.getElementById('fDT').value || '',
-    projectId: document.getElementById('fP').value || '',
-    classId: document.getElementById('fC').value || '',
-    projMgrId: document.getElementById('fM').value || ''
-  };
-}
-
-function buildQuery(params){
-  var list = [];
-  Object.keys(params).forEach(function(k){
-    if (params[k] !== null && params[k] !== undefined) {
-      list.push(encodeURIComponent(k) + '=' + encodeURIComponent(params[k]));
-    }
-  });
-  return list.join('&');
-}
-
-function loadSummary(){
-  document.getElementById('tB').innerHTML = '<tr><td colspan="8" class="loading">Loading summary...</td></tr>';
-
-  var params = getFilters();
-  params.action = 'summary';
-
-  fetch(SUITELET_URL + '&' + buildQuery(params), { method: 'GET' })
-    .then(function(r){ return r.json(); })
-    .then(function(data){
-      if (!data || data.success !== true) {
-        throw new Error((data && data.message) || 'Unable to load summary');
-      }
-      SUMMARY = data.rows || [];
-      applyClientSearchAndRender();
-    })
-    .catch(function(err){
-      console.error(err);
-      document.getElementById('tB').innerHTML = '<tr><td colspan="8" class="err">Error loading data</td></tr>';
-      SUMMARY = [];
-      VIEW = [];
-      renderSummaryCards();
-    });
-}
-
-function applyClientSearchAndRender(){
-  var q = (document.getElementById('sBox').value || '').toLowerCase();
-
-  VIEW = SUMMARY.filter(function(r){
-    return !q || ((r.projectName || '').toLowerCase().indexOf(q) !== -1);
-  });
-
-  sortCurrent();
-  renderTable();
-  renderSummaryCards();
-}
-
-function resetFilters(){
-  document.getElementById('fDF').value = ${JSON.stringify(CONFIG.DEFAULT_FROM)};
-  document.getElementById('fDT').value = ${JSON.stringify(CONFIG.DEFAULT_TO)};
-  document.getElementById('fP').value = '';
-  document.getElementById('fC').value = '';
-  document.getElementById('fM').value = '';
-  document.getElementById('sBox').value = '';
-  loadSummary();
-}
-
-function sortBy(col){
-  if (SORT_COL === col) {
-    SORT_DIR = SORT_DIR * -1;
-  } else {
-    SORT_COL = col;
-    SORT_DIR = (col === 'projectName') ? 1 : -1;
-  }
-
+/* ═══ SORT ═══ */
+function doSort(col){
+  if(sortCol===col)sortDir*=-1;else{sortCol=col;sortDir=col==='projectName'?1:-1}
   document.querySelectorAll('thead th').forEach(function(th){
-    th.classList.toggle('sorted', th.dataset.c === col);
-    if (th.dataset.c === col) {
-      th.querySelector('.si').innerHTML = SORT_DIR === 1 ? '&#9650;' : '&#9660;';
-    }
+    th.classList.toggle('sorted',th.dataset.c===col);
+    if(th.dataset.c===col)th.querySelector('.si').innerHTML=sortDir===1?'&#9650;':'&#9660;';
   });
-
-  sortCurrent();
-  renderTable();
+  applySort();renderTable();
 }
-
-function sortCurrent(){
-  VIEW.sort(function(a, b){
-    var va = a[SORT_COL];
-    var vb = b[SORT_COL];
-
-    if (SORT_COL === 'projectName') {
-      va = (va || '').toLowerCase();
-      vb = (vb || '').toLowerCase();
-      return va < vb ? -SORT_DIR : va > vb ? SORT_DIR : 0;
-    }
-
-    va = parseFloat(va) || 0;
-    vb = parseFloat(vb) || 0;
-    return va < vb ? -SORT_DIR : va > vb ? SORT_DIR : 0;
+function applySort(){
+  filtered.sort(function(a,b){
+    var va=a[sortCol],vb=b[sortCol];
+    if(sortCol!=='projectName'){va=pf(va);vb=pf(vb)}
+    else{va=(va||'').toLowerCase();vb=(vb||'').toLowerCase()}
+    return va<vb?-sortDir:va>vb?sortDir:0;
   });
 }
 
+/* ═══ RENDER TABLE ═══ */
 function renderTable(){
-  var tb = document.getElementById('tB');
-  document.getElementById('rCt').textContent = VIEW.length + ' projects';
-
-  if (!VIEW.length) {
-    tb.innerHTML = '<tr><td colspan="8" class="empty">No matching projects found</td></tr>';
-    return;
-  }
-
-  var h = '';
-  var tI = 0, tB = 0, tBC = 0, tCh = 0, tJ = 0, tCC = 0, tM = 0;
-
-  VIEW.forEach(function(r){
-    tI += num(r.income);
-    tB += num(r.bills);
-    tBC += num(r.billCredit);
-    tCh += num(r.checks);
-    tJ += num(r.journals);
-    tCC += num(r.creditCard);
-    tM += num(r.margin);
-
-    h += '<tr>';
-    h += '<td>' + esc(r.projectName) + '</td>';
-    h += amountTd(r, 'income', 'cg');
-    h += amountTd(r, 'bills', 'cr');
-    h += amountTd(r, 'billCredit', 'co');
-    h += amountTd(r, 'checks', 'cp');
-    h += amountTd(r, 'journals', 'ct');
-    h += amountTd(r, 'creditCard', 'ck');
-    h += amountTd(r, 'all', r.margin >= 0 ? 'mp' : 'mn', r.margin);
-    h += '</tr>';
+  var tb=document.getElementById('tB');
+  document.getElementById('rCt').textContent=filtered.length+' projects';
+  if(!filtered.length){tb.innerHTML='<tr><td colspan="8" class="empty">No matching projects found</td></tr>';return}
+  var h='',tI=0,tB=0,tBC=0,tCh=0,tJ=0,tCC=0,tM=0;
+  filtered.forEach(function(r){
+    var i=pf(r.income),b=pf(r.bills),bc=pf(r.billCredit),ch=pf(r.checks),jo=pf(r.journals),cc=pf(r.creditCard),mg=pf(r.margin);
+    tI+=i;tB+=b;tBC+=bc;tCh+=ch;tJ+=jo;tCC+=cc;tM+=mg;
+    h+='<tr><td>'+esc(r.projectName)+'</td>'
+      +amtCell(i,'cg',r.projectId,'Income')
+      +amtCell(b,'cr',r.projectId,'Bills')
+      +amtCell(bc,'co',r.projectId,'BillCredit')
+      +amtCell(ch,'cp',r.projectId,'Checks')
+      +amtCell(jo,'ct',r.projectId,'Journals')
+      +amtCell(cc,'ck',r.projectId,'CreditCard')
+      +amtCell(mg,mg>=0?'mp':'mn',r.projectId,'All')
+      +'</tr>';
   });
-
-  h += '<tr class="tot">';
-  h += '<td>TOTAL (' + VIEW.length + ')</td>';
-  h += '<td><span class="am cg">' + fmt(tI) + '</span></td>';
-  h += '<td><span class="am cr">' + fmt(tB) + '</span></td>';
-  h += '<td><span class="am co">' + fmt(tBC) + '</span></td>';
-  h += '<td><span class="am cp">' + fmt(tCh) + '</span></td>';
-  h += '<td><span class="am ct">' + fmt(tJ) + '</span></td>';
-  h += '<td><span class="am ck">' + fmt(tCC) + '</span></td>';
-  h += '<td><span class="am ' + (tM >= 0 ? 'mp' : 'mn') + '">' + fmt(tM) + '</span></td>';
-  h += '</tr>';
-
-  tb.innerHTML = h;
+  h+='<tr class="tot"><td>TOTAL ('+filtered.length+')</td>'
+    +'<td><span class="am cg">'+$(tI)+'</span></td>'
+    +'<td><span class="am cr">'+$(tB)+'</span></td>'
+    +'<td><span class="am co">'+$(tBC)+'</span></td>'
+    +'<td><span class="am cp">'+$(tCh)+'</span></td>'
+    +'<td><span class="am ct">'+$(tJ)+'</span></td>'
+    +'<td><span class="am ck">'+$(tCC)+'</span></td>'
+    +'<td><span class="am '+(tM>=0?'mp':'mn')+'">'+$(tM)+'</span></td></tr>';
+  tb.innerHTML=h;
+}
+function amtCell(v,cls,pid,type){
+  if(v===0)return '<td><span class="am z">&mdash;</span></td>';
+  return "<td><span class='am "+cls+"' onclick=\"dd('"+pid+"','"+type+"')\">"+$(v)+"</span></td>";
 }
 
-function amountTd(row, cat, cls, explicitValue){
-  var value = (cat === 'all') ? explicitValue : row[cat];
-  value = num(value);
-
-  if (value === 0) {
-    return '<td><span class="am z">&mdash;</span></td>';
-  }
-
-  return '<td><span class="am ' + cls + '" onclick="openDrilldown(\\'' + escJs(row.projectId) + '\\',\\'' + escJs(row.projectName) + '\\',\\'' + cat + '\\')">' + fmt(value) + '</span></td>';
-}
-
-function renderSummaryCards(){
-  var ti = 0, te = 0, tm = 0;
-  VIEW.forEach(function(r){
-    ti += num(r.income);
-    te += Math.abs(num(r.bills)) + Math.abs(num(r.billCredit)) + Math.abs(num(r.checks)) + Math.abs(num(r.journals)) + Math.abs(num(r.creditCard));
-    tm += num(r.margin);
+/* ═══ SUMMARY ═══ */
+function renderSummary(){
+  var ti=0,te=0,tm=0;
+  filtered.forEach(function(r){
+    ti+=pf(r.income);
+    te+=Math.abs(pf(r.bills))+Math.abs(pf(r.billCredit))+Math.abs(pf(r.checks))+Math.abs(pf(r.journals))+Math.abs(pf(r.creditCard));
+    tm+=pf(r.margin);
   });
-
-  document.getElementById('sP').textContent = VIEW.length;
-  document.getElementById('sI').textContent = fmt(ti);
-  document.getElementById('sE').textContent = fmt(te);
-
-  var mEl = document.getElementById('sM');
-  mEl.textContent = fmt(tm);
-  mEl.style.color = tm >= 0 ? 'var(--grn)' : 'var(--red)';
-  document.getElementById('sMp').textContent = ti ? ((tm / ti) * 100).toFixed(1) + '% margin' : '';
+  document.getElementById('sP').textContent=filtered.length;
+  document.getElementById('sI').textContent=$(ti);
+  document.getElementById('sE').textContent=$(te);
+  var mEl=document.getElementById('sM');
+  mEl.textContent=$(tm);mEl.style.color=tm>=0?'var(--grn)':'var(--red)';
+  document.getElementById('sMp').textContent=ti?(((tm/ti)*100).toFixed(1)+'% margin'):'';
 }
 
-function openDrilldown(projectId, projectName, category){
-  var modal = document.getElementById('ov');
-  modal.classList.add('open');
-  document.getElementById('mT').textContent = 'Loading...';
-  document.getElementById('mBd').textContent = '0';
-  document.getElementById('mB').innerHTML = '<div class="loading">Loading transactions...</div>';
-  document.getElementById('mTo').textContent = '';
-  document.getElementById('mPr').textContent = projectName || '';
+/* ═══════════════════════════════════════════════
+   DRILL DOWN — AJAX call to fetch transactions
+   ═══════════════════════════════════════════════ */
+function dd(projectId,type){
+  document.getElementById('ov').classList.add('open');
+  document.getElementById('mB').innerHTML='<div class="ld"><div class="ldr"></div><span>Loading transactions...</span></div>';
+  var projName=(ALL.find(function(d){return d.projectId===projectId})||{}).projectName||'';
+  var labels={Income:'Income / Revenue',Bills:'Bills',BillCredit:'Bill Credits',Checks:'Checks',Journals:'Journals',CreditCard:'Credit Card',All:'All Transactions'};
+  document.getElementById('mT').textContent=(labels[type]||type)+' \\u2014 '+projName;
+  document.getElementById('mPr').textContent=projName;
+  document.getElementById('mBd').textContent='...';
+  document.getElementById('mTo').textContent='';
 
-  var params = getFilters();
-  params.action = 'drilldown';
-  params.projectId = projectId;
-  params.category = category;
+  var drillUrl=SU+'&action=drilldown&projectId='+encodeURIComponent(projectId)+'&type='+encodeURIComponent(type)+'&classId='+encodeURIComponent(gv('fC'));
 
-  fetch(SUITELET_URL + '&' + buildQuery(params), { method: 'GET' })
-    .then(function(r){ return r.json(); })
-    .then(function(data){
-      if (!data || data.success !== true) {
-        throw new Error((data && data.message) || 'Unable to load drilldown');
-      }
-      renderDrilldown(projectName, category, data.rows || []);
+  fetch(drillUrl)
+    .then(function(resp){
+      if(!resp.ok)throw new Error('HTTP '+resp.status);
+      return resp.json();
     })
-    .catch(function(err){
-      console.error(err);
-      document.getElementById('mT').textContent = 'Error';
-      document.getElementById('mB').innerHTML = '<div class="err">Error loading transactions</div>';
+    .then(function(data){
+      renderModal(data);
+    })
+    .catch(function(e){
+      document.getElementById('mB').innerHTML='<div class="ld"><span style="color:var(--red)">Error loading: '+esc(e.message)+'</span></div>';
     });
 }
 
-function renderDrilldown(projectName, category, rows){
-  var labels = {
-    income: 'Income / Revenue',
-    bills: 'Bills',
-    billCredit: 'Bill Credits',
-    checks: 'Checks',
-    journals: 'Journals',
-    creditCard: 'Credit Card',
-    all: 'All Transactions'
-  };
-
-  document.getElementById('mT').textContent = (labels[category] || category) + ' — ' + (projectName || '');
-  document.getElementById('mBd').textContent = rows.length + ' transactions';
-  document.getElementById('mPr').textContent = projectName || '';
-
-  if (!rows.length) {
-    document.getElementById('mB').innerHTML = '<div class="empty">No transactions found</div>';
-    document.getElementById('mTo').textContent = '';
+function renderModal(data){
+  document.getElementById('mBd').textContent=data.length+' transactions';
+  if(!data.length){
+    document.getElementById('mB').innerHTML='<div class="empty">No transactions found for this selection</div>';
+    document.getElementById('mTo').textContent='';
     return;
   }
-
-  var h = '<table><thead><tr>';
-  h += '<th>Doc #</th><th>Date</th><th>Type</th><th>Entity</th><th>Memo</th><th>Account</th><th>Class</th><th style="text-align:right">Amount</th>';
-  h += '</tr></thead><tbody>';
-
-  var total = 0;
-  rows.forEach(function(t){
-    total += num(t.amount);
-    h += '<tr>';
-    h += '<td><a href="' + escAttr(t.url || '#') + '" target="_blank">' + esc(t.tranId || t.internalId || '') + '</a></td>';
-    h += '<td>' + esc(t.date || '') + '</td>';
-    h += '<td>' + esc(t.type || '') + '</td>';
-    h += '<td>' + esc(t.entity || '') + '</td>';
-    h += '<td style="max-width:220px;overflow:hidden;text-overflow:ellipsis">' + esc(t.memo || '') + '</td>';
-    h += '<td>' + esc(t.account || '') + '</td>';
-    h += '<td>' + esc(t.className || '') + '</td>';
-    h += '<td style="text-align:right;font-family:var(--mono);font-weight:600">' + fmt(num(t.amount)) + '</td>';
-    h += '</tr>';
+  var rows='';
+  data.forEach(function(t){
+    var recType=t.recordType||'transaction';
+    var nsUrl='/app/accounting/transactions/'+esc(recType)+'.nl?id='+t.id;
+    rows+='<tr>'
+      +'<td><a href="'+nsUrl+'" target="_blank">'+esc(t.tranId||t.id)+'</a></td>'
+      +'<td>'+esc(t.date)+'</td>'
+      +'<td>'+esc(t.type)+'</td>'
+      +'<td>'+esc(t.entity)+'</td>'
+      +'<td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.memo)+'</td>'
+      +'<td>'+esc(t.account)+'</td>'
+      +'<td>'+esc(t.className)+'</td>'
+      +'<td>'+esc(t.department)+'</td>'
+      +'<td style="text-align:right;font-family:var(--mono);font-weight:600">'+$(pf(t.amount))+'</td>'
+      +'</tr>';
   });
-
-  h += '</tbody></table>';
-  document.getElementById('mB').innerHTML = h;
-  document.getElementById('mTo').innerHTML = 'Total: <span class="tv">' + fmt(total) + '</span>';
+  document.getElementById('mB').innerHTML='<table><thead><tr>'
+    +'<th>Doc #</th><th>Date</th><th>Type</th><th>Entity</th><th>Memo</th><th>Account</th><th>Class</th><th>Dept</th><th style="text-align:right">Amount</th>'
+    +'</tr></thead><tbody>'+rows+'</tbody></table>';
+  var total=data.reduce(function(s,t){return s+pf(t.amount)},0);
+  document.getElementById('mTo').innerHTML='Total: <span class="tv">'+$(total)+'</span>';
 }
 
-function closeModal(){
-  document.getElementById('ov').classList.remove('open');
-}
+function cm(){document.getElementById('ov').classList.remove('open')}
+document.addEventListener('keydown',function(e){if(e.key==='Escape')cm()});
 
-document.addEventListener('keydown', function(e){
-  if (e.key === 'Escape') closeModal();
-});
-
+/* ═══ EXPORT ═══ */
 function exportCSV(){
-  if (!VIEW.length) return;
-
-  var csv = 'Project,Income,Bills,Bill Credits,Checks,Journals,Credit Card,Net Margin\\n';
-  VIEW.forEach(function(r){
-    csv += '"' + (r.projectName || '').replace(/"/g, '""') + '",'
-      + num(r.income) + ','
-      + num(r.bills) + ','
-      + num(r.billCredit) + ','
-      + num(r.checks) + ','
-      + num(r.journals) + ','
-      + num(r.creditCard) + ','
-      + num(r.margin) + '\\n';
-  });
-
-  var blob = new Blob([csv], { type: 'text/csv' });
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'Project_PnL_' + new Date().toISOString().slice(0,10) + '.csv';
-  a.click();
+  if(!filtered.length)return;
+  var csv='Project,Income,Bills,Bill Credits,Checks,Journals,Credit Card,Net Margin\\n';
+  filtered.forEach(function(r){csv+='"'+(r.projectName||'').replace(/"/g,'""')+'",'+pf(r.income)+','+pf(r.bills)+','+pf(r.billCredit)+','+pf(r.checks)+','+pf(r.journals)+','+pf(r.creditCard)+','+pf(r.margin)+'\\n'});
+  var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download='Project_PnL_'+new Date().toISOString().slice(0,10)+'.csv';a.click();
 }
 
-function fmt(n){
-  n = num(n);
-  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 });
-}
-function num(v){
-  var n = parseFloat(v);
-  return isNaN(n) ? 0 : n;
-}
-function esc(s){
-  if (s === null || s === undefined) return '';
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-function escAttr(s){ return esc(s); }
-function escJs(s){
-  if (s === null || s === undefined) return '';
-  return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-}
+/* ═══ UTILS ═══ */
+function pf(v){return parseFloat(v)||0}
+function $(n){return(n||0).toLocaleString('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2})}
+function esc(s){if(!s)return '';var d=document.createElement('div');d.textContent=s;return d.innerHTML}
 </script>
 </body>
 </html>`;
-
             context.response.write(html);
-        }
+        };
 
-        function handleSummary(context) {
+        /* ═════════════════════════════════════════════════════
+           GROUPED SEARCH — small, fast payload for summary
+           ═════════════════════════════════════════════════════ */
+        const loadGroupedData = () => {
+            const results = [];
             try {
-                const params = context.request.parameters;
-                const rows = loadSummaryRows(params);
-                return writeJson(context, {
-                    success: true,
-                    rows: rows
+                const s = search.create({
+                    type: 'transaction',
+                    filters: [
+                        ['posting', 'is', 'T'], 'AND',
+                        ['accounttype', 'noneof', 'OthCurrAsset', 'FixedAsset', 'OthAsset', 'OthCurrLiab'], 'AND',
+                        ['class', 'anyof', '1', '2'], 'AND',
+                        ['custcol_cv_project', 'noneof', '@NONE@']
+                    ],
+                    columns: [
+                        search.createColumn({ name: 'custcol_cv_project', summary: 'GROUP' }),
+                        search.createColumn({ name: 'formulanumeric', summary: 'SUM',
+                            formula: "case when {type} in ('Invoice','Credit Memo') then {amount} when {type} = 'Journal' AND {accounttype} = 'Income' then {amount} else 0 end" }),
+                        search.createColumn({ name: 'formulanumeric', summary: 'SUM',
+                            formula: "case when {type} = 'Bill' then {amount} else 0 end" }),
+                        search.createColumn({ name: 'formulanumeric', summary: 'SUM',
+                            formula: "case when {type} = 'Bill Credit' then {amount} else 0 end" }),
+                        search.createColumn({ name: 'formulanumeric', summary: 'SUM',
+                            formula: "case when {type} = 'Check' then {amount} else 0 end" }),
+                        search.createColumn({ name: 'formulanumeric', summary: 'SUM',
+                            formula: "case when {type} = 'Journal' AND {accounttype} != 'Income' then {amount} else 0 end" }),
+                        search.createColumn({ name: 'formulanumeric', summary: 'SUM',
+                            formula: "case when {type} = 'Credit Card' then {amount} else 0 end" }),
+                        search.createColumn({ name: 'formulanumeric', summary: 'SUM',
+                            formula: "(case when {type} in ('Invoice','Credit Memo') then {amount} when {type} = 'Journal' AND {accounttype} = 'Income' then {amount} else 0 end) - ((case when {type} = 'Bill' then {amount} else 0 end) + case when {type} = 'Bill Credit' then {amount} else 0 end ) - (case when {type} = 'Journal' AND {accounttype} != 'Income' then {amount} else 0 end) - (case when {type} = 'Credit Card' then {amount} else 0 end) - (case when {type} = 'Check' then {amount} else 0 end)" })
+                    ]
                 });
-            } catch (e) {
-                log.error('handleSummary', e);
-                return writeJson(context, {
-                    success: false,
-                    message: e.message || e.toString()
+                const paged = s.runPaged({ pageSize: 1000 });
+                paged.pageRanges.forEach(pr => {
+                    paged.fetch({ index: pr.index }).data.forEach(r => {
+                        const c = r.columns;
+                        results.push({
+                            projectId: r.getValue(c[0]) || '',
+                            projectName: r.getText(c[0]) || '',
+                            income: r.getValue(c[1]) || 0,
+                            bills: r.getValue(c[2]) || 0,
+                            billCredit: r.getValue(c[3]) || 0,
+                            checks: r.getValue(c[4]) || 0,
+                            journals: r.getValue(c[5]) || 0,
+                            creditCard: r.getValue(c[6]) || 0,
+                            margin: r.getValue(c[7]) || 0
+                        });
+                    });
                 });
+            } catch (e) { log.error('loadGroupedData', e); }
+            log.debug('Grouped rows', results.length);
+            return results;
+        };
+
+        /* ═════════════════════════════════════════════════════
+           DRILL-DOWN HANDLER — fetches individual transactions
+           ═════════════════════════════════════════════════════ */
+        const handleDrilldown = (context) => {
+            const p = context.request.parameters;
+            const projectId = p.projectId;
+            const type = p.type;
+
+            const filters = [
+                ['posting', 'is', 'T'], 'AND',
+                ['accounttype', 'noneof', 'OthCurrAsset', 'FixedAsset', 'OthAsset', 'OthCurrLiab'], 'AND',
+                ['custcol_cv_project', 'anyof', projectId]
+            ];
+
+            // Class filter
+            if (p.classId) {
+                filters.push('AND', ['class', 'anyof', p.classId]);
+            } else {
+                filters.push('AND', ['class', 'anyof', '1', '2']);
             }
-        }
 
-        function handleDrilldown(context) {
+            // Type-specific filters
+            if (type === 'Income') {
+                filters.push('AND', [
+                    [['type', 'anyof', 'CustInvc', 'CustCred']],
+                    'OR',
+                    [['type', 'anyof', 'Journal'], 'AND', ['accounttype', 'anyof', 'Income']]
+                ]);
+            } else if (type === 'Bills') {
+                filters.push('AND', ['type', 'anyof', 'VendBill']);
+            } else if (type === 'BillCredit') {
+                filters.push('AND', ['type', 'anyof', 'VendCred']);
+            } else if (type === 'Checks') {
+                filters.push('AND', ['type', 'anyof', 'Check']);
+            } else if (type === 'Journals') {
+                filters.push('AND', ['type', 'anyof', 'Journal']);
+                filters.push('AND', ['accounttype', 'noneof', 'Income']);
+            } else if (type === 'CreditCard') {
+                filters.push('AND', ['type', 'anyof', 'CardChrg']);
+            }
+            // 'All' = no additional type filter
+
+            const results = [];
             try {
-                const params = context.request.parameters;
-                const rows = loadDrilldownRows(params);
-                return writeJson(context, {
-                    success: true,
-                    rows: rows
+                const txnSearch = search.create({
+                    type: 'transaction',
+                    filters: filters,
+                    columns: [
+                        search.createColumn({ name: 'tranid', sort: search.Sort.DESC }),
+                        search.createColumn({ name: 'trandate' }),
+                        search.createColumn({ name: 'type' }),
+                        search.createColumn({ name: 'entity' }),
+                        search.createColumn({ name: 'memo' }),
+                        search.createColumn({ name: 'account' }),
+                        search.createColumn({ name: 'class' }),
+                        search.createColumn({ name: 'department' }),
+                        search.createColumn({ name: 'amount' }),
+                        search.createColumn({ name: 'recordtype' }),
+                        search.createColumn({ name: 'custcol_cv_project' }),
+                        search.createColumn({ name: 'debitamount' }),
+                        search.createColumn({ name: 'creditamount' }),
+                        search.createColumn({ name: 'location' })
+                    ]
+                });
+
+                const paged = txnSearch.runPaged({ pageSize: 1000 });
+                paged.pageRanges.forEach(pr => {
+                    paged.fetch({ index: pr.index }).data.forEach(r => {
+                        results.push({
+                            id: r.id,
+                            tranId: r.getValue('tranid') || '',
+                            date: r.getValue('trandate') || '',
+                            type: r.getText('type') || '',
+                            entity: r.getText('entity') || '',
+                            memo: r.getValue('memo') || '',
+                            account: r.getText('account') || '',
+                            className: r.getText('class') || '',
+                            department: r.getText('department') || '',
+                            amount: r.getValue('amount') || 0,
+                            recordType: r.getValue('recordtype') || 'transaction'
+                        });
+                    });
                 });
             } catch (e) {
                 log.error('handleDrilldown', e);
-                return writeJson(context, {
-                    success: false,
-                    message: e.message || e.toString()
-                });
-            }
-        }
-
-        function loadSummaryRows(params) {
-            const resultMap = {};
-            const filters = buildBaseFilters(params, false);
-
-            const tranTypeCol = search.createColumn({ name: 'type', summary: search.Summary.GROUP });
-            const acctTypeCol = search.createColumn({ name: 'accounttype', summary: search.Summary.GROUP });
-            const projCol = search.createColumn({ name: CONFIG.PROJECT_FIELD, summary: search.Summary.GROUP, sort: search.Sort.ASC });
-            const amtCol = search.createColumn({ name: 'amount', summary: search.Summary.SUM });
-
-            const s = search.create({
-                type: 'transaction',
-                filters: filters,
-                columns: [
-                    projCol,
-                    tranTypeCol,
-                    acctTypeCol,
-                    amtCol
-                ]
-            });
-
-            const paged = s.runPaged({ pageSize: 1000 });
-            paged.pageRanges.forEach(function(pr){
-                const page = paged.fetch({ index: pr.index });
-                page.data.forEach(function(r){
-                    const projectId = r.getValue(projCol) || '';
-                    const projectName = r.getText(projCol) || '';
-                    const typeText = r.getText(tranTypeCol) || '';
-                    const accountTypeText = r.getText(acctTypeCol) || '';
-                    const amount = parseFloat(r.getValue(amtCol)) || 0;
-
-                    if (!projectId) {
-                        return;
-                    }
-
-                    if (!resultMap[projectId]) {
-                        resultMap[projectId] = {
-                            projectId: projectId,
-                            projectName: projectName,
-                            income: 0,
-                            bills: 0,
-                            billCredit: 0,
-                            checks: 0,
-                            journals: 0,
-                            creditCard: 0,
-                            margin: 0
-                        };
-                    }
-
-                    const cat = classify(typeText, accountTypeText);
-                    if (cat === 'income') {
-                        resultMap[projectId].income += amount;
-                    } else if (cat === 'bills') {
-                        resultMap[projectId].bills += amount;
-                    } else if (cat === 'billCredit') {
-                        resultMap[projectId].billCredit += amount;
-                    } else if (cat === 'checks') {
-                        resultMap[projectId].checks += amount;
-                    } else if (cat === 'journals') {
-                        resultMap[projectId].journals += amount;
-                    } else if (cat === 'creditCard') {
-                        resultMap[projectId].creditCard += amount;
-                    }
-                });
-            });
-
-            const rows = [];
-            Object.keys(resultMap).forEach(function(key){
-                const row = resultMap[key];
-                row.margin = row.income - row.bills - row.billCredit - row.checks - row.journals - row.creditCard;
-                rows.push(row);
-            });
-
-            return rows;
-        }
-
-        function loadDrilldownRows(params) {
-            const projectId = params.projectId || '';
-            const category = params.category || 'all';
-
-            if (!projectId) {
-                return [];
             }
 
-            const filters = buildBaseFilters(params, true);
-            filters.push('AND', [CONFIG.PROJECT_FIELD, 'anyof', projectId]);
+            log.debug('Drilldown results', 'Project=' + projectId + ' Type=' + type + ' Count=' + results.length);
+            context.response.write(JSON.stringify(results));
+        };
 
-            addCategoryFilter(filters, category);
-
-            const cols = [
-                search.createColumn({ name: 'tranid' }),
-                search.createColumn({ name: 'trandate', sort: search.Sort.DESC }),
-                search.createColumn({ name: 'type' }),
-                search.createColumn({ name: 'entity' }),
-                search.createColumn({ name: 'memo' }),
-                search.createColumn({ name: 'account' }),
-                search.createColumn({ name: 'accounttype' }),
-                search.createColumn({ name: 'class' }),
-                search.createColumn({ name: 'amount' }),
-                search.createColumn({ name: 'recordtype' })
-            ];
-
-            const s = search.create({
-                type: 'transaction',
-                filters: filters,
-                columns: cols
-            });
-
-            const rows = [];
-            const paged = s.runPaged({ pageSize: 1000 });
-
-            paged.pageRanges.forEach(function(pr){
-                const page = paged.fetch({ index: pr.index });
-                page.data.forEach(function(r){
-                    const recordType = r.getValue({ name: 'recordtype' }) || 'transaction';
-                    const internalId = r.id;
-
-                    rows.push({
-                        internalId: internalId,
-                        tranId: r.getValue({ name: 'tranid' }) || '',
-                        date: normalizeNetSuiteDate(r.getValue({ name: 'trandate' }) || ''),
-                        type: r.getText({ name: 'type' }) || '',
-                        entity: r.getText({ name: 'entity' }) || '',
-                        memo: r.getValue({ name: 'memo' }) || '',
-                        account: r.getText({ name: 'account' }) || '',
-                        accountType: r.getText({ name: 'accounttype' }) || '',
-                        className: r.getText({ name: 'class' }) || '',
-                        classId: r.getValue({ name: 'class' }) || '',
-                        amount: parseFloat(r.getValue({ name: 'amount' })) || 0,
-                        recordType: recordType,
-                        url: '/app/accounting/transactions/' + recordType + '.nl?id=' + internalId
-                    });
-                });
-            });
-
-            return rows;
-        }
-
-        function buildBaseFilters(params, allowClassSpecific) {
-            const filters = [
-                ['posting', 'is', 'T'],
-                'AND',
-                ['accounttype', 'noneof', 'OthCurrAsset', 'FixedAsset', 'OthAsset', 'OthCurrLiab'],
-                'AND',
-                [CONFIG.PROJECT_FIELD, 'noneof', '@NONE@']
-            ];
-
-            const from = params.from || CONFIG.DEFAULT_FROM;
-            const to = params.to || CONFIG.DEFAULT_TO;
-            const nsFrom = toNsDate(from);
-            const nsTo = toNsDate(to);
-
-            if (nsFrom && nsTo) {
-                filters.push('AND', ['trandate', 'within', nsFrom, nsTo]);
-            }
-
-            if (params.projectId) {
-                filters.push('AND', [CONFIG.PROJECT_FIELD, 'anyof', params.projectId]);
-            }
-
-            if (params.classId) {
-                filters.push('AND', ['class', 'anyof', params.classId]);
-            } else if (allowClassSpecific !== false && CONFIG.CLASS_SCOPE_IDS && CONFIG.CLASS_SCOPE_IDS.length) {
-                filters.push('AND', ['class', 'anyof'].concat(CONFIG.CLASS_SCOPE_IDS));
-            }
-
-            if (params.projMgrId) {
-                filters.push('AND', [CONFIG.PROJECT_MANAGER_FIELD, 'anyof', params.projMgrId]);
-            }
-
-            return filters;
-        }
-
-        function addCategoryFilter(filters, category) {
-            if (!category || category === 'all') {
-                return;
-            }
-
-            if (category === 'income') {
-                filters.push('AND', [
-                    ['type', 'anyof', 'CustInvc', 'CustCred'],
-                    'OR',
-                    [
-                        ['type', 'anyof', 'Journal'],
-                        'AND',
-                        ['accounttype', 'anyof', 'Income']
-                    ]
-                ]);
-                return;
-            }
-
-            if (category === 'bills') {
-                filters.push('AND', ['type', 'anyof', 'VendBill']);
-                return;
-            }
-
-            if (category === 'billCredit') {
-                filters.push('AND', ['type', 'anyof', 'VendCred']);
-                return;
-            }
-
-            if (category === 'checks') {
-                filters.push('AND', ['type', 'anyof', 'Check']);
-                return;
-            }
-
-            if (category === 'journals') {
-                filters.push('AND', [
-                    ['type', 'anyof', 'Journal'],
-                    'AND',
-                    ['accounttype', 'noneof', 'Income']
-                ]);
-                return;
-            }
-
-            if (category === 'creditCard') {
-                filters.push('AND', ['type', 'anyof', 'CardChrg', 'CardRfnd']);
-            }
-        }
-
-        function classify(typeText, accountTypeText) {
-            const tp = (typeText || '').toLowerCase();
-            const at = (accountTypeText || '').toLowerCase();
-
-            if (tp === 'invoice' || tp === 'credit memo') {
-                return 'income';
-            }
-            if (tp === 'journal' && at === 'income') {
-                return 'income';
-            }
-            if (tp === 'bill') {
-                return 'bills';
-            }
-            if (tp === 'bill credit') {
-                return 'billCredit';
-            }
-            if (tp === 'check') {
-                return 'checks';
-            }
-            if (tp === 'journal' && at !== 'income') {
-                return 'journals';
-            }
-            if (tp === 'credit card') {
-                return 'creditCard';
-            }
-            return 'other';
-        }
-
-        function loadAllFilterOptions() {
-            const result = {
-                projects: [],
-                classes: [],
-                projectManagers: []
-            };
-
+        /* ═══════ FILTER OPTIONS ═══════ */
+        const loadAllFilterOptions = () => {
+            const r = { projects: [], classes: [], projectManagers: [], jobTypes: [] };
             try {
-                search.create({
-                    type: 'customrecord_cv_project',
-                    filters: [['isinactive', 'is', 'F']],
+                search.create({ type: 'customrecord_cv_project', filters: [['isinactive', 'is', 'F']],
                     columns: [search.createColumn({ name: 'name', sort: search.Sort.ASC })]
-                }).run().each(function(res){
-                    result.projects.push({
-                        id: res.id,
-                        name: res.getValue({ name: 'name' })
-                    });
-                    return true;
-                });
-            } catch (e1) {
-                log.debug('project customrecord fallback', e1);
+                }).run().each(res => { r.projects.push({ id: res.id, name: res.getValue('name') }); return true; });
+            } catch (e) {
                 try {
-                    search.create({
-                        type: 'job',
-                        filters: [['isinactive', 'is', 'F']],
+                    search.create({ type: 'job', filters: [['isinactive', 'is', 'F']],
                         columns: [search.createColumn({ name: 'entityid', sort: search.Sort.ASC })]
-                    }).run().each(function(res){
-                        result.projects.push({
-                            id: res.id,
-                            name: res.getValue({ name: 'entityid' })
-                        });
-                        return true;
-                    });
-                } catch (e2) {
-                    log.debug('project job fallback failed', e2);
-                }
+                    }).run().each(res => { r.projects.push({ id: res.id, name: res.getValue('entityid') }); return true; });
+                } catch (e2) { log.debug('proj', e2); }
             }
-
             try {
-                search.create({
-                    type: 'classification',
-                    filters: [['isinactive', 'is', 'F']],
+                search.create({ type: 'classification', filters: [['isinactive', 'is', 'F']],
                     columns: [search.createColumn({ name: 'name', sort: search.Sort.ASC })]
-                }).run().each(function(res){
-                    result.classes.push({
-                        id: res.id,
-                        name: res.getValue({ name: 'name' })
-                    });
-                    return true;
-                });
-            } catch (e) {
-                log.debug('class options', e);
-            }
-
+                }).run().each(res => { r.classes.push({ id: res.id, name: res.getValue('name') }); return true; });
+            } catch (e) { log.debug('cls', e); }
             try {
-                search.create({
-                    type: 'employee',
-                    filters: [['isinactive', 'is', 'F']],
+                search.create({ type: 'employee', filters: [['isinactive', 'is', 'F']],
                     columns: [search.createColumn({ name: 'entityid', sort: search.Sort.ASC })]
-                }).run().each(function(res){
-                    result.projectManagers.push({
-                        id: res.id,
-                        name: res.getValue({ name: 'entityid' })
-                    });
-                    return true;
-                });
-            } catch (e) {
-                log.debug('project manager options', e);
-            }
+                }).run().each(res => { r.projectManagers.push({ id: res.id, name: res.getValue('entityid') }); return true; });
+            } catch (e) { log.debug('pm', e); }
+            try {
+                search.create({ type: 'customlist_job_type',
+                    columns: [search.createColumn({ name: 'name', sort: search.Sort.ASC })]
+                }).run().each(res => { r.jobTypes.push({ id: res.id, name: res.getValue('name') }); return true; });
+            } catch (e) { log.debug('jt', e); }
+            return r;
+        };
 
-            return result;
-        }
+        const getScriptUrl = () => {
+            const script = runtime.getCurrentScript();
+            return '/app/site/hosting/scriptlet.nl?script=' + script.id + '&deploy=' + script.deploymentId;
+        };
 
-        function writeJson(context, obj) {
-            context.response.setHeader({
-                name: 'Content-Type',
-                value: 'application/json; charset=utf-8'
-            });
-            context.response.write(JSON.stringify(obj));
-        }
-
-        function toNsDate(isoDate) {
-            if (!isoDate) return '';
-            const parts = String(isoDate).split('-');
-            if (parts.length !== 3) return isoDate;
-            return parts[1] + '/' + parts[2] + '/' + parts[0];
-        }
-
-        function normalizeNetSuiteDate(value) {
-            if (!value) return '';
-            return String(value);
-        }
-
-        function escapeHtml(s) {
-            if (s === null || s === undefined) return '';
-            return String(s)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-        }
-
-        function buildErrorPage(e) {
-            const msg = escapeHtml(e && (e.message || e.toString()) || 'Unknown error');
-            return '<html><body style="font-family:Arial;padding:24px;color:#b91c1c"><h3>Suitelet Error</h3><p>' + msg + '</p></body></html>';
-        }
-
-        return { onRequest: onRequest };
+        return { onRequest };
     });
