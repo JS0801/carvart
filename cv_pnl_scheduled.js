@@ -165,7 +165,7 @@ define(['N/search', 'N/file', 'N/log', 'N/runtime'],
             } catch (e) { log.debug('pm', e); }
 
             try {
-                search.create({ type: 'customlist_job_type',
+                search.create({ type: 'customlist_cv_company',
                     columns: [search.createColumn({ name: 'name', sort: search.Sort.ASC })]
                 }).run().each(res => { r.jobTypes.push({ id: res.id, name: res.getValue('name') }); return true; });
             } catch (e) { log.debug('jt', e); }
